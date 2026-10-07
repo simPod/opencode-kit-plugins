@@ -1,6 +1,6 @@
 /** @jsxImportSource @opentui/solid */
 
-import { Plugin } from "@opencode-ai/plugin/tui"
+import { Plugin } from "@opencode/plugin/tui"
 import { createSignal } from "solid-js"
 
 const POLL_MS = 45_000
@@ -50,6 +50,12 @@ function prUrls(command: unknown, output: unknown) {
   return [...output.matchAll(/https:\/\/github\.com\/[^\s/]+\/[^\s/]+\/pull\/\d+/g)].map((match) => match[0])
 }
 
+function inputCommand(input: unknown) {
+  return typeof input === "object" && input !== null && !Array.isArray(input) && "command" in input
+    ? input.command
+    : undefined
+}
+
 function createdPrUrls(messages: ReturnType<Plugin.Context["data"]["session"]["message"]["list"]>) {
   const urls = new Set<string>()
   const adopt = (command: unknown, output: unknown) => prUrls(command, output).forEach((url) => urls.add(url))
@@ -63,7 +69,7 @@ function createdPrUrls(messages: ReturnType<Plugin.Context["data"]["session"]["m
     for (const part of message.content) {
       if (part.type !== "tool" || part.state.status !== "completed") continue
       adopt(
-        part.state.input.command,
+        inputCommand(part.state.input),
         part.state.content
           .filter((item) => item.type === "text")
           .map((item) => item.text)
@@ -125,8 +131,8 @@ function PrRow(props: { context: Plugin.Context; pr: Pr }) {
       <text fg={statusColor(props.pr)} flexShrink={0}>
         {statusIcon(props.pr)}
       </text>
-      <text fg={props.context.theme.text.default} wrapMode="word">
-        <span style={{ fg: hovered() ? props.context.theme.text.default : props.context.theme.text.subdued }}>
+      <text fg={props.context.theme.text.base} wrapMode="word">
+        <span style={{ fg: hovered() ? props.context.theme.text.base : props.context.theme.text.muted }}>
           #{props.pr.number}
         </span>{" "}
         {props.pr.title}
@@ -138,12 +144,14 @@ function PrRow(props: { context: Plugin.Context; pr: Pr }) {
 export default Plugin.define({
   id: "kit.pr-tracker",
   setup: async (context) => {
-    const directory = context.location?.directory
-    if (!directory) return
+    const location = context.location ?? context.data.location.default()
+    const sessionDirectory = (sessionID: string) =>
+      context.data.session.get(sessionID)?.location.directory ?? location.directory
     const [state, update] = context.storage.memory("pr-sidebar-v2", {
       initial: {
         roots: {} as Record<string, string[]>,
         prs: {} as Record<string, Pr>,
+        directories: {} as Record<string, string>,
       },
     })
 
@@ -152,15 +160,16 @@ export default Plugin.define({
     let disposed = false
     let inFlight = false
 
-    const adopt = async (sessionID: string, urls: string[]) => {
+    const adopt = async (sessionID: string, urls: string[], directory = sessionDirectory(sessionID)) => {
       if (disposed || urls.length === 0) return
       const root = context.data.session.root(sessionID)
       const previous = state.roots[root] ?? []
       const next = [...new Set([...previous, ...urls])]
-      if (next.length !== previous.length)
-        update((draft) => {
-          draft.roots[root] = next
-        })
+      update((draft) => {
+        draft.roots[root] = next
+        draft.directories ??= {}
+        for (const url of urls) draft.directories[url] = directory
+      })
       const missing = urls.filter((url) => !state.prs[url])
       const prs = (await Promise.all(missing.map((url) => fetchPr(directory, url)))).filter((pr) => pr !== undefined)
       if (disposed || prs.length === 0) return
@@ -174,14 +183,8 @@ export default Plugin.define({
       const root = context.data.session.root(sessionID)
       if (recovered.has(root)) return
       recovered.add(root)
-      void adopt(
-        root,
-        createdPrUrls(
-          [...new Set([root, ...context.data.session.family(root)])].flatMap((member) =>
-            context.data.session.message.list(member),
-          ),
-        ),
-      )
+      for (const member of new Set([root, ...context.data.session.family(root)]))
+        void adopt(member, createdPrUrls(context.data.session.message.list(member)))
     }
 
     const refresh = async () => {
@@ -189,7 +192,9 @@ export default Plugin.define({
       inFlight = true
       try {
         const urls = state.roots[activeRoot] ?? []
-        const prs = (await Promise.all(urls.map((url) => fetchPr(directory, url)))).filter((pr) => pr !== undefined)
+        const prs = (
+          await Promise.all(urls.map((url) => fetchPr(state.directories?.[url] ?? sessionDirectory(activeRoot), url)))
+        ).filter((pr) => pr !== undefined)
         if (disposed || !prs.some((pr) => changed(state.prs[pr.url], pr))) return
         update((draft) => {
           for (const pr of prs) draft.prs[pr.url] = pr
@@ -204,27 +209,27 @@ export default Plugin.define({
     const unsubscribers = [
       context.data.on("session.shell.ended", (event) => {
         if (event.data.shell.status !== "exited" || event.data.shell.exit !== 0) return
-        void adopt(event.data.sessionID, prUrls(event.data.shell.command, event.data.output.output))
+        void adopt(
+          event.data.sessionID,
+          prUrls(event.data.shell.command, event.data.output.output),
+          event.location?.directory,
+        )
       }),
       context.data.on("session.tool.success", (event) => {
         const message = context.data.session.message.get(event.data.sessionID, event.data.assistantMessageID)
         if (message?.type !== "assistant") return
         const part = message.content.find((item) => item.type === "tool" && item.id === event.data.id)
-        if (!part?.state || part.state.status !== "completed") return
-        const input = part.state.input
-        const command =
-          typeof input === "object" && input !== null && !Array.isArray(input) && "command" in input
-            ? input.command
-            : undefined
+        if (part?.type !== "tool" || part.state.status !== "completed") return
         void adopt(
           event.data.sessionID,
           prUrls(
-            command,
+            inputCommand(part.state.input),
             event.data.content
               .filter((item) => item.type === "text")
               .map((item) => item.text)
               .join("\n"),
           ),
+          event.location?.directory,
         )
       }),
     ]
@@ -247,7 +252,7 @@ export default Plugin.define({
           <>
             {list().length > 0 ? (
               <box>
-                <text fg={context.theme.text.default}>
+                <text fg={context.theme.text.base}>
                   <b>Pull requests</b>
                 </text>
                 {list().map((pr) => <PrRow context={context} pr={pr} />)}

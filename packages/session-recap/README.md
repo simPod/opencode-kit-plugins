@@ -13,15 +13,18 @@ the next step is to review the resulting changes.
 
 ## Install
 
-Add the package to `opencode.jsonc`, then restart OpenCode:
+This branch repairs the published 0.1.2 package for OpenCode 2.0.24. Build locally as described in the root README.
 
-```jsonc
+Add the built directory to `~/.config/opencode/cli.json`, then restart OpenCode. If `XDG_CONFIG_HOME` is set, use `$XDG_CONFIG_HOME/opencode/cli.json` instead:
+
+```json
 {
-  "plugins": ["@kitlangton/opencode-session-recap"],
+  "$schema": "https://opencode.ai/v2/cli.json",
+  "plugins": ["/path/to/opencode-plugins/packages/session-recap/dist"]
 }
 ```
 
-Requires an OpenCode V2 `next` release with `session.generate` and the `session.composer.top` TUI slot.
+This is a CLI-only plugin: it runs locally in the terminal, including when connected to a remote server. Do not add it to `opencode.jsonc`; there is no project-local `cli.json`.
 
 ## Use
 
