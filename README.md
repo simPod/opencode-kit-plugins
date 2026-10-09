@@ -1,13 +1,22 @@
 # OpenCode Plugins
 
-Plugins for the [OpenCode](https://opencode.ai) V2 TUI, repaired for OpenCode 2.0.24.
+Plugins for [OpenCode](https://opencode.ai) V2, including terminal plugins repaired
+for OpenCode 2.0.24 and a task-memory trial checked with OpenCode 2.0.26.
 
-Configure these terminal-only plugins in `~/.config/opencode/cli.json`, not in
-`opencode.json(c)`. They export `./tui` and share the terminal's Solid and OpenTUI
-runtime. The published 0.1.1 PR tracker and 0.1.2 recap packages use the earlier
+Configure the PR tracker and session recap in `~/.config/opencode/cli.json`, not
+in `opencode.json(c)`. They export `./tui` and share the terminal's Solid and
+OpenTUI runtime. Task memory needs both configuration files. The published
+0.1.1 PR tracker and 0.1.2 recap packages use the earlier
 V2 preview layout; use the repaired local packages from this branch instead.
 
 ## Plugins
+
+### [`@simpod/opencode-task-memory`](./packages/task-memory)
+
+Global local trial for a decision log, pending questions, and task checkpoints.
+Includes server tools and a terminal panel. Unlike the plugins below, configure it
+in both `opencode.json` and `cli.json`. Records are local and separated by project;
+sessions link to tasks explicitly. See the package README for commands and limits.
 
 ### [`@kitlangton/opencode-pr-tracker`](./packages/pr-tracker)
 
