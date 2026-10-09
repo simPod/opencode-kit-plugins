@@ -13,8 +13,8 @@ V2 preview layout; use the repaired local packages from this branch instead.
 
 ### [`@simpod/opencode-task-memory`](./packages/task-memory)
 
-Global local trial for a decision log, pending questions, and task checkpoints.
-Includes server tools and a terminal panel. Unlike the plugins below, configure it
+Global local trial for persistent open findings and task records.
+Includes server tools, a findings sidebar, and a full-record panel. Unlike the plugins below, configure it
 in both `opencode.json` and `cli.json`. Records are local and separated by project;
 sessions link to tasks explicitly. See the package README for commands and limits.
 

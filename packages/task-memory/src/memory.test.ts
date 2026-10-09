@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert"
 import { randomUUID } from "node:crypto"
 import { test } from "node:test"
-import { latestDecisions, Memory, taskContext, type Storage } from "./memory.js"
+import { findingsContext, latestDecisions, latestFindings, Memory, taskContext, type Storage } from "./memory.js"
 import type { Change, State } from "./schema.js"
 
 class DurableStorage implements Storage {
@@ -204,7 +204,7 @@ test("keeps projects separate and leaves new sessions unlinked", async () => {
   assert.equal((await memory.view("new-session")).task, null)
 
   const other = new Memory(storage, randomUUID())
-  assert.deepEqual(await other.view("shared-session"), { task: null, tasks: [] })
+  assert.deepEqual(await other.view("shared-session"), { scope: "current", findings: [], task: null, tasks: [] })
   await assert.rejects(other.view("shared-session", created.task.id), /Task not found in this project/)
   await assert.rejects(other.update("shared-session", {
     operation: "link", taskID: created.task.id,
@@ -233,6 +233,9 @@ test("serializes concurrent updates from separate Memory instances without losin
       operation: "question", blocking: false, text: `Question ${index}`,
     })
   }))
+  await Promise.all(Array.from({ length: 4 }, (_, index) => (index % 2 === 0 ? memory : other).update("unlinked", {
+    operation: "finding", kind: "risk", status: "open", text: `Risk ${index}`, reason: "Concurrent project finding",
+  })))
 
   const fresh = new Memory(storage, projectID)
   const loaded = await fresh.view("first")
@@ -243,6 +246,9 @@ test("serializes concurrent updates from separate Memory instances without losin
     new Set(Array.from({ length: 12 }, (_, index) => `Question ${index}`)))
   assert.equal(loaded.task.questions.filter(({ sessionID }) => sessionID === "first").length, 6)
   assert.equal(loaded.task.questions.filter(({ sessionID }) => sessionID === "second").length, 6)
+  assert.deepEqual(loaded.findings, [])
+  assert.deepEqual(new Set((await fresh.view("first", undefined, "project")).findings.map(({ text }) => text)),
+    new Set(["Risk 0", "Risk 1", "Risk 2", "Risk 3"]))
   assert.deepEqual((await fresh.view("second")).task, loaded.task)
   assert.equal((await fresh.view("first", second.task.id)).task?.title, "Independent task")
 })
@@ -312,4 +318,146 @@ test("rejects missing and foreign references without changing persisted state", 
   }
   assert.deepEqual((await memory.view("target")).task, target.task)
   assert.equal((await memory.view("unlinked")).task, null)
+})
+
+test("preserves findings across completion and revisions without leaking them to unrelated sessions", async () => {
+  const { memory, projectID, storage } = fixture()
+  const first = await memory.update("unlinked", {
+    operation: "finding", kind: "verification", status: "open", text: "Compaction not tested",
+    reason: "No live compaction check was run; verify preservation of open findings",
+  })
+  assert.equal(first.task, null)
+  const verification = first.findings[0]
+  assert(verification)
+  assert.equal(verification.taskID, null)
+  const created = await memory.update("first", { operation: "create", title: "Ship the findings list" })
+  assert(created.task)
+  const bugView = await memory.update("first", {
+    operation: "finding", kind: "bug", status: "open", text: "Plugin fails to load",
+    reason: "Plugin API reports an incompatible export; update the plugin definition",
+  })
+  const bug = bugView.findings.at(-1)
+  assert(bug)
+  assert.equal(bug.taskID, created.task.id)
+  await memory.update("first", {
+    operation: "checkpoint", status: "completed", summary: "Findings list shipped",
+    done: ["Implemented the findings list"], remaining: [], needsInput: [],
+  })
+  await memory.update("first", { operation: "create", title: "Different work" })
+
+  const resumed = new Memory(storage, projectID)
+  const unlinked = await resumed.view("another-session")
+  assert.equal(unlinked.task, null)
+  assert.equal(unlinked.scope, "current")
+  assert.deepEqual(unlinked.findings, [])
+  const project = await resumed.view("another-session", undefined, "project")
+  assert.equal(project.scope, "project")
+  assert.deepEqual(latestFindings(project.findings).map(({ text, kind, status }) => ({ text, kind, status })), [
+    { text: "Compaction not tested", kind: "verification", status: "open" },
+    { text: "Plugin fails to load", kind: "bug", status: "open" },
+  ])
+  await resumed.update("another-session", {
+    operation: "finding", findingID: verification.id, expectedRevision: 1, kind: "verification", status: "resolved",
+    text: verification.text, reason: "Live compaction check preserved both findings",
+  })
+  const afterResolution = storage.snapshot()
+  await assert.rejects(memory.update("first", {
+    operation: "finding", findingID: verification.id, expectedRevision: 1, kind: "verification", status: "open",
+    text: verification.text, reason: "A stale dialog tries to edit the old open finding",
+  }), /Finding changed since it was inspected/)
+  assert.deepEqual(storage.snapshot(), afterResolution)
+  await resumed.update("another-session", {
+    operation: "finding", findingID: bug.id, kind: "bug", status: "deferred",
+    text: bug.text, reason: "The user explicitly chose to defer the plugin repair",
+  })
+  const deferred = await resumed.view("another-session", undefined, "project")
+  assert.equal(latestFindings(deferred.findings).filter(({ status }) => status === "open").length, 0)
+  assert.match(findingsContext(deferred.findings), /Explicitly deferred findings: 1/)
+  assert.doesNotMatch(findingsContext(deferred.findings), /Compaction not tested/)
+  await resumed.update("another-session", {
+    operation: "finding", findingID: bug.id, expectedRevision: 2, kind: "bug", status: "open",
+    text: bug.text, reason: "The repair is now in scope; the plugin still reports the same error",
+  })
+  const freshMemory = new Memory(storage, projectID)
+  const fresh = await freshMemory.view("third-session", undefined, "project")
+  assert.equal(fresh.task, null)
+  assert.equal(fresh.findings.length, 5)
+  assert.deepEqual(fresh.findings.filter(({ id }) => id === bug.id).map(({ status, taskID, sessionID }) => ({
+    status, taskID, sessionID,
+  })), [
+    { status: "open", taskID: created.task.id, sessionID: "first" },
+    { status: "deferred", taskID: created.task.id, sessionID: "another-session" },
+    { status: "open", taskID: created.task.id, sessionID: "another-session" },
+  ])
+  assert.equal(fresh.findings[0]?.reason, verification.reason)
+  assert.match(findingsContext(fresh.findings), /Open findings: 1/)
+  assert.match(findingsContext(fresh.findings), /bug: Plugin fails to load/)
+  assert.deepEqual((await freshMemory.view("third-session")).findings, [])
+  assert.deepEqual((await freshMemory.view("another-session")).findings, [])
+  // Revision authorship does not change ownership or move a finding into another task.
+  const originalSession = await freshMemory.view("unlinked")
+  assert.deepEqual(originalSession.findings.map(({ id }) => id), [verification.id, verification.id])
+  assert.equal(latestFindings(originalSession.findings)[0]?.status, "resolved")
+  assert.deepEqual((await freshMemory.view("first")).findings.map(({ id }) => id), [bug.id, bug.id, bug.id])
+  assert.deepEqual((await freshMemory.view("third-session", created.task.id)).findings.map(({ id }) => id),
+    [bug.id, bug.id, bug.id])
+  assert.equal((await freshMemory.view("third-session")).task, null)
+  await freshMemory.update("linked-session", { operation: "link", taskID: created.task.id })
+  const linked = await freshMemory.view("linked-session")
+  assert.deepEqual(linked.findings.map(({ id }) => id), [bug.id, bug.id, bug.id])
+  assert.equal(linked.task?.checkpoints.at(-1)?.status, "completed")
+  assert.match(findingsContext(linked.findings), /Plugin fails to load/)
+  assert.doesNotMatch(findingsContext(linked.findings), /Compaction not tested/)
+  const otherProject = new Memory(storage, randomUUID())
+  assert.deepEqual((await otherProject.view("third-session")).findings, [])
+  const before = storage.snapshot()
+  await assert.rejects(otherProject.update("third-session", {
+    operation: "finding", findingID: bug.id, kind: "bug", status: "resolved", text: bug.text, reason: "Wrong project",
+  }), /Finding not found in this project/)
+  await assert.rejects(resumed.update("third-session", {
+    operation: "finding", kind: "risk", status: "deferred", text: "Not recorded", reason: "No open finding exists",
+  }), /New findings must be open/)
+  await assert.rejects(async () => resumed.update("third-session", {
+    operation: "finding", findingID: bug.id, kind: "bug", status: "resolved", text: bug.text, reason: " ",
+  }))
+  assert.deepEqual(storage.snapshot(), before)
+})
+
+test("loads previous trial records and preserves them when findings are first added", async () => {
+  const { memory, projectID, storage } = fixture()
+  const created = await memory.update("session", { operation: "create", title: "Existing trial task" })
+  const state = [...storage.snapshot().values()][0]
+  assert(state)
+  const { findings, ...legacy } = state
+  let saved: unknown = legacy
+  const upgraded = new Memory({
+    get: async () => structuredClone(saved),
+    set: async (_, value) => { saved = structuredClone(value) },
+  }, projectID)
+  assert.deepEqual((await upgraded.view("session")).findings, [])
+  await upgraded.update("new-session", {
+    operation: "finding", kind: "risk", status: "open", text: "Old plugin cannot read the added field",
+    reason: "Upgrade server and terminal together; older strict schemas cannot read finding records",
+  })
+  const loaded = await upgraded.view("session")
+  assert.deepEqual(loaded.task, created.task)
+  assert.deepEqual(loaded.findings, [])
+  assert.equal((await upgraded.view("new-session")).findings.length, 1)
+  assert.equal((await upgraded.view("session", undefined, "project")).findings.length, 1)
+})
+
+test("bounds project context without hiding finding counts or dropping inspection history", async () => {
+  const { memory } = fixture()
+  const long = "f".repeat(4000)
+  for (let index = 0; index < 14; index++) {
+    await memory.update("session", { operation: "finding", kind: "verification", status: "open", text: long, reason: long })
+  }
+  const view = await memory.view("session")
+  const context = findingsContext(view.findings)
+  assert(context.length < 12_000)
+  assert.match(context, /Open findings: 14/)
+  assert.match(context, /4 more omitted; use task_memory_view/)
+  assert.equal(view.task, null)
+  assert.equal(view.findings.length, 14)
+  assert.equal(view.findings[13]?.text, long)
 })

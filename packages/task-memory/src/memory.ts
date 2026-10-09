@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto"
-import { Change, State, type Task, type View } from "./schema.js"
+import { Change, State, type Finding, type FindingScope, type Task, type View } from "./schema.js"
 
 export interface Storage {
   get(key: string): Promise<unknown>
@@ -20,20 +20,22 @@ export class Memory {
 
   private async load(): Promise<State> {
     const saved = await this.storage.get(this.key())
-    if (saved === undefined) return { bindings: {}, tasks: {}, version: 1 }
+    if (saved === undefined) return { bindings: {}, tasks: {}, findings: [], version: 1 }
     return State.parse(saved)
   }
 
-  async view(sessionID: string, taskID?: string): Promise<View> {
+  async view(sessionID: string, taskID?: string, scope: FindingScope = "current"): Promise<View> {
     await writes.get(this.key())?.catch(() => {})
-    return this.select(await this.load(), sessionID, taskID)
+    return this.select(await this.load(), sessionID, taskID, scope)
   }
 
-  private select(state: State, sessionID: string, taskID?: string): View {
+  private select(state: State, sessionID: string, taskID?: string, scope: FindingScope = "current"): View {
     const selected = taskID ?? state.bindings[sessionID]
     const task = selected && Object.hasOwn(state.tasks, selected) ? state.tasks[selected] : null
     if (selected && !task) throw new MemoryError("Task not found in this project.")
     return {
+      scope,
+      findings: scope === "project" ? state.findings : currentFindings(state.findings, sessionID, selected),
       task: task ?? null,
       tasks: Object.values(state.tasks)
         .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
@@ -67,6 +69,18 @@ export class Memory {
         state.bindings[sessionID] = task.id
         if (!task.sessions.includes(sessionID)) task.sessions.push(sessionID)
         task.updatedAt = at
+      } else if (change.operation === "finding") {
+        const previous = change.findingID ? latestFindings(state.findings).find((finding) => finding.id === change.findingID) : undefined
+        if (change.findingID && !previous) throw new MemoryError("Finding not found in this project.")
+        if (!previous && change.status !== "open") throw new MemoryError("New findings must be open.")
+        if (change.expectedRevision !== undefined && change.expectedRevision !== state.findings.filter((finding) => finding.id === previous?.id).length) {
+          throw new MemoryError("Finding changed since it was inspected. Read the current finding before updating it.")
+        }
+        state.findings.push({
+          at, sessionID, id: previous?.id ?? randomUUID(),
+          taskID: previous ? previous.taskID : state.bindings[sessionID] ?? null,
+          kind: change.kind, status: change.status, text: change.text, reason: change.reason,
+        })
       } else {
         const taskID = state.bindings[sessionID]
         const task = taskID ? state.tasks[taskID] : undefined
@@ -75,7 +89,9 @@ export class Memory {
         task.updatedAt = at
       }
       await this.storage.set(key, state)
-      return this.select(state, sessionID)
+      // The server needs the changed finding's ID and revision even when a user
+      // explicitly edits a finding outside their current task/session.
+      return this.select(state, sessionID, undefined, "project")
     })
     writes.set(key, result)
     void result.finally(() => {
@@ -84,7 +100,7 @@ export class Memory {
     return result
   }
 
-  private apply(task: Task, change: Exclude<Change, { operation: "create" | "link" }>, sessionID: string, at: string) {
+  private apply(task: Task, change: Exclude<Change, { operation: "create" | "link" | "finding" }>, sessionID: string, at: string) {
     switch (change.operation) {
       case "decision": {
         const id = change.decisionID ?? randomUUID()
@@ -118,6 +134,38 @@ export class Memory {
 
 export function latestDecisions(task: Task) {
   return [...new Map(task.decisions.map((decision) => [decision.id, decision])).values()]
+}
+
+export function latestFindings(findings: readonly Finding[]) {
+  return [...new Map(findings.map((finding) => [finding.id, finding])).values()]
+}
+
+export function currentFindings(findings: readonly Finding[], sessionID: string, taskID?: string): Finding[] {
+  const origins = new Map<string, Finding>()
+  for (const finding of findings) if (!origins.has(finding.id)) origins.set(finding.id, finding)
+  const visible = new Set([...origins.values()]
+    .filter((origin) => origin.sessionID === sessionID || (taskID !== undefined && origin.taskID === taskID))
+    .map((origin) => origin.id))
+  return findings.filter((finding) => visible.has(finding.id))
+}
+
+export function findingsContext(findings: readonly Finding[]): string {
+  const current = latestFindings(findings)
+  const open = current.filter((finding) => finding.status === "open")
+  const deferred = current.filter((finding) => finding.status === "deferred")
+  const short = (text: string) => text.length > 240 ? `${text.slice(0, 240)}…` : text
+  const section = (label: string, entries: Finding[]) => [
+    `${label}: ${entries.length}`,
+    ...entries.slice(0, 10).map((finding) => `- ${finding.kind}: ${short(finding.text)} (${finding.id}). Evidence: ${short(finding.reason)}`),
+    ...(entries.length > 10 ? [`${entries.length - 10} more omitted; use task_memory_view before work that depends on this list.`] : []),
+  ]
+  return [
+    "Findings below belong to the selected task or this origin session. Other project findings are not included by default.",
+    "Findings persist across completed tasks. They are records, not permission to fix them.",
+    ...section("Open findings", open),
+    ...section("Explicitly deferred findings", deferred),
+    "Use task_memory_view for relevant finding history. Use scope: project only for explicit project-wide inspection. Missing verification is not proof of a bug.",
+  ].join("\n")
 }
 
 export function currentStatus(task: Task): "active" | "completed" {
