@@ -12,13 +12,19 @@ function useTaskView(sessionID: Accessor<string>) {
   const rpc = ctx.client.rpc(TaskMemory)
   const [revision, setRevision] = createSignal(0)
   const [view] = createResource(
-    () => ({ sessionID: sessionID(), revision: revision(), location: ctx.data.session.get(sessionID())?.location }),
-    async ({ sessionID, location }): Promise<{ view?: View; error?: string }> => {
+    () => ({
+      sessionID: sessionID(), revision: revision(), location: ctx.data.session.get(sessionID())?.location,
+      projectID: ctx.data.session.get(sessionID())?.projectID,
+    }),
+    async ({ sessionID, location, projectID }): Promise<{
+      sessionID: string; directory?: string; projectID?: string; view?: View; error?: string
+    }> => {
+      const identity = { sessionID, directory: location?.directory, projectID }
       try {
         if (!location) throw new Error("Session information is still loading.")
-        return { view: await rpc.read({ sessionID }, { location }) }
+        return { ...identity, view: await rpc.read({ sessionID }, { location }) }
       } catch (error) {
-        return { error: error instanceof Error ? error.message : String(error) }
+        return { ...identity, error: error instanceof Error ? error.message : String(error) }
       }
     },
   )
@@ -26,12 +32,21 @@ function useTaskView(sessionID: Accessor<string>) {
     if (event.data.projectID === ctx.data.session.get(sessionID())?.projectID) setRevision((value) => value + 1)
   })
   onCleanup(stop)
-  return view
+  return {
+    loading: () => view.loading,
+    view: () => {
+      const result = view()
+      const current = ctx.data.session.get(sessionID())
+      if (result?.sessionID !== sessionID() || result.directory !== current?.location.directory ||
+        result.projectID !== current?.projectID) return undefined
+      return result
+    },
+  }
 }
 
 function TaskPanel(props: { panel: PanelInput }) {
   const ctx = usePlugin()
-  const view = useTaskView(() => props.panel.sessionID)
+  const { view, loading } = useTaskView(() => props.panel.sessionID)
   const [history, setHistory] = createSignal(false)
   ctx.keymap.layer(() => ({
     commands: [
@@ -51,7 +66,7 @@ function TaskPanel(props: { panel: PanelInput }) {
         <Show when={view()?.error}>
           <text fg={ctx.theme.text.feedback.error.base}>Cannot load task memory: {view()?.error}</text>
         </Show>
-        <Show when={view.loading}><text fg={ctx.theme.text.muted}>Loading…</text></Show>
+        <Show when={loading()}><text fg={ctx.theme.text.muted}>Loading…</text></Show>
         <Show when={task()} fallback={
           <box flexDirection="column" gap={1}>
             <text>No task linked to this session.</text>
@@ -128,7 +143,7 @@ function TaskPanel(props: { panel: PanelInput }) {
 
 function TaskStatus(props: { sessionID: string }) {
   const ctx = usePlugin()
-  const view = useTaskView(() => props.sessionID)
+  const { view } = useTaskView(() => props.sessionID)
   const task = () => view()?.view?.task
   const blocking = () => task()?.questions.filter((question) => question.blocking && question.answers.length === 0) ?? []
   return <Show when={task()}>{(current: Accessor<Task>) =>
@@ -139,6 +154,77 @@ function TaskStatus(props: { sessionID: string }) {
       }</For>
     </box>
   }</Show>
+}
+
+function TaskSidebar(props: { sessionID: string }) {
+  const ctx = usePlugin()
+  const { view, loading } = useTaskView(() => props.sessionID)
+  const task = () => view()?.view?.task
+  const short = (text: string, limit = 60) => text.length > limit ? `${text.slice(0, limit)}…` : text
+  const questions = () => (task()?.questions.filter((question) => question.answers.length === 0) ?? [])
+    .sort((a, b) => Number(b.blocking) - Number(a.blocking))
+  const blockingCount = () => questions().filter((question) => question.blocking).length
+  const decisions = () => {
+    const current = task()
+    return current ? latestDecisions(current).sort((a, b) => b.at.localeCompare(a.at)) : []
+  }
+  const checkpoint = () => task()?.checkpoints.at(-1)
+
+  return <box flexDirection="column" gap={1} paddingBottom={1}>
+    <text fg={ctx.theme.text.base}><b>Task memory</b></text>
+    <Show when={loading() && !view()?.view}><text fg={ctx.theme.text.muted}>Loading…</text></Show>
+    <Show when={view()?.error}>
+      <text fg={ctx.theme.text.feedback.error.base} wrapMode="word">Unavailable: {short(view()?.error ?? "")}</text>
+    </Show>
+    <Show when={view()?.view && !view()?.error}>
+      <Show when={task()} fallback={<text fg={ctx.theme.text.muted}>No linked task.</text>}>
+        {(current: Accessor<Task>) => <>
+          <box flexDirection="column">
+            <text fg={ctx.theme.text.base} wrapMode="word">{short(current().title)}</text>
+            <text fg={ctx.theme.text.muted}>
+              {currentStatus(current())} · {checkpoint()?.done.length ?? 0} done · {checkpoint()?.remaining.length ?? 0} left
+            </text>
+          </box>
+          <text fg={ctx.theme.text.muted} wrapMode="word">
+            Checkpoint: {short(checkpoint()?.summary ?? "None recorded.", 80)}
+          </text>
+          <Show when={(checkpoint()?.needsInput.length ?? 0) > 0}>
+            <box flexDirection="column">
+              <text fg={ctx.theme.text.feedback.warning.base} wrapMode="word">
+                Needs input: {short(checkpoint()?.needsInput[0] ?? "", 48)}
+              </text>
+              <Show when={(checkpoint()?.needsInput.length ?? 0) > 1}>
+                <text fg={ctx.theme.text.muted}>+ {(checkpoint()?.needsInput.length ?? 0) - 1} more input requests</text>
+              </Show>
+            </box>
+          </Show>
+          <box flexDirection="column">
+            <text fg={blockingCount() > 0 ? ctx.theme.text.feedback.warning.base : ctx.theme.text.muted}>
+              Questions: {questions().length} open · {blockingCount()} blocking
+            </text>
+            <For each={questions().slice(0, 2)}>{(question) =>
+              <text fg={question.blocking ? ctx.theme.text.feedback.warning.base : ctx.theme.text.base} wrapMode="word">
+                {question.blocking ? "BLOCKING" : "OPEN"}: {short(question.text, 48)}
+              </text>
+            }</For>
+            <Show when={questions().length > 2}>
+              <text fg={ctx.theme.text.muted}>+ {questions().length - 2} more questions</text>
+            </Show>
+          </box>
+          <box flexDirection="column">
+            <For each={decisions().filter((decision) => decision.status === "accepted").slice(0, 1)}>{(decision) =>
+              <text fg={ctx.theme.text.base} wrapMode="word">Accepted: {short(decision.text, 48)}</text>
+            }</For>
+            <For each={decisions().filter((decision) => decision.status === "rejected").slice(0, 1)}>{(decision) =>
+              <text fg={ctx.theme.text.muted} wrapMode="word">Rejected: {short(decision.text, 48)}</text>
+            }</For>
+            <Show when={decisions().length === 0}><text fg={ctx.theme.text.muted}>No decisions recorded.</text></Show>
+          </box>
+        </>}
+      </Show>
+    </Show>
+    <text fg={ctx.theme.text.muted}>/task-memory · full record</text>
+  </box>
 }
 
 export default Plugin.define({
@@ -279,6 +365,7 @@ export default Plugin.define({
       <Show when={panel.name === panelName}><TaskPanel panel={panel} /></Show>
     ) })
     const status = ctx.ui.slot({ append: "session.composer.top", render: (input) => <TaskStatus sessionID={input.sessionID} /> })
-    return () => { panel(); status() }
+    const sidebar = ctx.ui.slot({ prepend: "sidebar.content", render: (input) => <TaskSidebar sessionID={input.sessionID} /> })
+    return () => { panel(); status(); sidebar() }
   },
 })

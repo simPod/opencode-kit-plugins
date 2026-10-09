@@ -15,9 +15,16 @@ bun run --filter '@simpod/opencode-task-memory' build
 
 Add its absolute `dist` directory to the `plugins` array
 in `~/.config/opencode/opencode.json`. Add the same directory to the `plugins`
-array in `~/.config/opencode/cli.json` for the terminal panel. Keep existing entries.
+array in `~/.config/opencode/cli.json` for the terminal sidebar and panel. Keep existing entries.
 
 ## Use
+
+The existing right-hand sidebar shows a persistent compact summary: current task,
+checkpoint, done/remaining counts, input requests, pending questions with blockers
+highlighted, and the latest accepted decision and rejected alternative. It updates when records
+change. Long text and extra questions are abbreviated; `/task-memory` shows the
+full record. The host hides the sidebar on narrow terminals, where the composer
+still shows blocking reminders.
 
 Open `/task-memory` to see the current task, its checkpoint, decisions, and questions.
 Ask the agent to create a task for substantial work, or use `/task-memory-new`.
@@ -69,6 +76,7 @@ uv run scripts/smoke-task-memory.py SESSION_ID OTHER_WORKTREE OTHER_PROJECT
 
 The smoke check needs the installed trial and a linked `SESSION_ID`. It makes no
 model requests, creates its own temporary session, and keeps the test task as history.
-Successful checks mark it completed; failed checks keep it active. It checks terminal
-rendering and cancellation, not every editing dialog
-submission, live model-context injection, or actual compaction.
+Successful checks mark it completed; failed checks keep it active. It checks sidebar
+placement, live updates, narrow-terminal fallback, session switching, panel rendering,
+and cancellation. It does not check every editing dialog submission, live model-context
+injection, or actual compaction.
