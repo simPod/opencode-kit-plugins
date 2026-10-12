@@ -92,7 +92,8 @@ export default Plugin.define({
         rootIDs: {} as Record<string, string>,
       },
     })
-    const [manual, updateManual] = context.storage.store("manual-mrs-v1", {
+    // Keep the existing key so links saved with /mr-track remain available.
+    const [tracked, updateTracked] = context.storage.store("manual-mrs-v1", {
       initial: { roots: {} as Record<string, string[]> },
     })
 
@@ -150,6 +151,18 @@ export default Plugin.define({
         )
       ).filter((pr) => pr !== undefined)
       if (disposed || prs.length === 0) return
+      if (prs.some((pr) => !tracked.roots[root]?.includes(pr.url))) {
+        try {
+          await updateTracked((draft) => {
+            draft.roots[root] = [...new Set([...(draft.roots[root] ?? []), ...prs.map((pr) => pr.url)])]
+          })
+        } catch {
+          context.ui.toast.show({
+            message: "Cannot save tracked requests. They may disappear after restart.", variant: "error",
+          })
+        }
+      }
+      if (disposed) return
       const previous = state.roots[root] ?? []
       const next = [...new Set([...previous, ...prs.map((pr) => pr.url)])]
       if (next.length !== previous.length || prs.some((pr) => changed(state.prs[pr.url], pr)))
@@ -187,7 +200,7 @@ export default Plugin.define({
 
     const refresh = async (root: string) => {
       if (disposed) return
-      const urls = [...new Set([...(state.roots[root] ?? []), ...(manual.roots[root] ?? [])])]
+      const urls = [...new Set([...(state.roots[root] ?? []), ...(tracked.roots[root] ?? [])])]
       const prs = (await Promise.all(urls.map((url) => load(url, true)))).filter(
         (pr) => pr !== undefined,
       )
@@ -229,7 +242,7 @@ export default Plugin.define({
               return
             }
             if (disposed) return
-            await updateManual((draft) => {
+            await updateTracked((draft) => {
               draft.roots[root.id] = [...new Set([...(draft.roots[root.id] ?? []), pr.url])]
             })
             if (disposed) return
@@ -300,7 +313,7 @@ export default Plugin.define({
           })
         })
         const list = () => {
-          const urls = [...new Set([...(state.roots[root()] ?? []), ...(manual.roots[root()] ?? [])])]
+          const urls = [...new Set([...(state.roots[root()] ?? []), ...(tracked.roots[root()] ?? [])])]
           const prs = new Map<string, Pr>()
           const branch = current()
           if (branch?.state === "OPEN") prs.set(branch.url, branch)

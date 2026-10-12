@@ -42,6 +42,12 @@ const toasts: Parameters<Plugin.Context["ui"]["toast"]["show"]>[0][] = []
 let sidebar: Sidebar | undefined
 let layer: Layer | undefined
 let saves = 0
+let historyAvailable = true
+type ShellEnded = {
+  location: { directory: string }
+  data: { sessionID: string; shell: { status: string; exit: number; command: string }; output: { output: string } }
+}
+let shellEnded: ((event: ShellEnded) => void) | undefined
 
 async function start() {
   const [memory, setMemory] = createStore({ roots: {}, prs: {}, rootIDs: {} })
@@ -50,7 +56,7 @@ async function start() {
     storage: {
       memory: () => [memory, (mutate: (draft: typeof memory) => void) => setMemory(produce(mutate))],
       store: () => [durable, async (mutate: (draft: Durable) => void) => {
-        if (mode === "save") throw new Error("Disk unavailable")
+        if (mode === "save" || mode === "automatic-save") throw new Error("Disk unavailable")
         setDurable(produce(mutate))
         saves++
       }],
@@ -67,11 +73,19 @@ async function start() {
           data: sessions.filter((item) => "parentID" in item && item.parentID === parentID), cursor: {},
         }),
       },
-      message: { list: async () => ({ data: [], cursor: {} }) },
+      message: { list: async ({ sessionID }: { sessionID: string }) => {
+        if (!historyAvailable) throw new Error("History unavailable after restart")
+        return { data: mode === "recovered" && sessionID === "child" ? [{
+          type: "shell", status: "exited", exit: 0, command: "glab mr create", output: { output: pr.url },
+        }] : [], cursor: {} }
+      } },
     },
     data: {
-      on: () => () => {},
-      session: { root: (id: string) => id, message: { get: () => undefined } },
+      on: (name: string, run: (event: ShellEnded) => void) => {
+        if (name === "session.shell.ended") shellEnded = run
+        return () => {}
+      },
+      session: { root: (id: string) => id === "child" ? "root" : id, message: { get: () => undefined } },
     },
     ui: {
       router: { current: route },
@@ -111,35 +125,50 @@ function stop() {
   if (typeof active.unload === "function") active.unload()
 }
 try {
-  assert(!(await frame()).includes("!42"))
-  if (mode === "invalid") {
+  const initial = await frame()
+  assert.equal(initial.includes("!42"), mode === "recovered")
+  if (mode === "automatic" || mode === "automatic-save") {
+    assert(shellEnded !== undefined)
+    shellEnded({ location: { directory: "/example/active-worktree" }, data: {
+      sessionID: "child", shell: { status: "exited", exit: 0, command: "glab mr create" }, output: { output: pr.url },
+    } })
+    assert((await frame()).includes("!42"), "display an MR adopted from a live shell event")
+  } else if (mode === "invalid") {
     for (const input of ["42", "https://github.com/acme/widget/pull/42", "https://user:secret@code.example.com/acme/widget/-/merge_requests/42"])
       await active.command.run(input)
     assert.equal(lookups.length, 0)
-  } else {
+  } else if (mode !== "recovered") {
     await active.command.run(`  ${pr.url}  `)
   }
-  if (["invalid", "lookup", "save", "home"].includes(mode ?? "")) {
+  if (mode === "automatic-save") {
+    assert.deepEqual(unwrap(durable.roots), {})
+    assert((await frame()).includes("!42"), "keep the current row when saving fails")
+    assert.equal(toasts.at(-1)?.variant, "error", "report that automatic tracking could not be saved")
+  } else if (["invalid", "lookup", "save", "home"].includes(mode ?? "")) {
     assert.equal(saves, 0)
     assert.deepEqual(unwrap(durable.roots), {})
     assert(!(await frame()).includes("!42"))
     assert.equal(toasts.at(-1)?.variant, "error")
   } else {
     assert.deepEqual(unwrap(durable.roots), { root: [pr.url] })
-    assert(lookups.every((directory) => directory === "/example/active-worktree"))
+    if (mode === "track" || mode === "closed")
+      assert(lookups.every((directory) => directory === "/example/active-worktree"))
     if (mode === "closed") {
       assert(!(await frame()).includes("!42"))
       assert.match(toasts.at(-1)?.message ?? "", /hidden/)
     } else {
       assert.equal((await frame()).match(/!42/g)?.length, 1)
-      await active.command.run(pr.url)
-      assert.deepEqual(unwrap(durable.roots), { root: [pr.url] })
+      if (mode === "track") {
+        await active.command.run(pr.url)
+        assert.deepEqual(unwrap(durable.roots), { root: [pr.url] })
+      }
       setRoute({ type: "session", sessionID: "other" })
       assert(!(await frame()).includes("!42"), "do not attach an MR to unrelated sessions")
       stop()
       setRoute({ type: "session", sessionID: "child" })
+      historyAvailable = false
       active = await start()
-      assert.equal((await frame()).match(/!42/g)?.length, 1, "restore the explicit link with empty runtime state after restart")
+      assert.equal((await frame()).match(/!42/g)?.length, 1, "restore the saved link with empty runtime state and unavailable history after restart")
     }
   }
 } finally {

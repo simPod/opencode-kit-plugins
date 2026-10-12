@@ -18,7 +18,9 @@ When a session opens, recovery reads its complete history and its subagents'
 history, including nested subagents. You do not need to open each subagent's tab
 first. Recovery is retried during polling if a history read fails, and unchanged
 histories are reused instead of downloaded again.
-Explicit request URLs remain usable after their original worktree is removed.
+Automatically adopted links are saved for the session family and survive TUI
+restarts, even if history recovery is unavailable. Explicit request URLs remain
+usable after their original worktree is removed.
 
 For MRs updated through Python or other scripts, run `/mr-track <GitLab MR URL>`
 in the owning session. The command validates the MR with `glab` and saves its
