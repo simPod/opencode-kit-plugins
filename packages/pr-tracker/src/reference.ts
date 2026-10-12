@@ -274,9 +274,70 @@ function apiReference(command: string, output: unknown): Reference | undefined {
   }
 }
 
+function scriptReferences(command: string, output: unknown): Reference[] {
+  // Recognize a literal script runner, not command examples or files read by cat.
+  // Do not inspect, execute, or attempt to interpret the script's contents.
+  const executable = command.match(/^\s*([^\s"'`$;&|<>()[\]{}\\]+)/)?.[1]
+  if (!executable || (!/^(?:python(?:\d+(?:\.\d+)*)?|node(?:js)?|bun|deno|ruby|perl|sh|bash|zsh)$/.test(executable.split("/").at(-1)!) &&
+    !/(?:^|\/)[^/]+\.(?:py|[cm]?js|ts|rb|pl|sh)$/.test(executable))) return []
+  if (typeof output !== "string") return []
+
+  const parse = (text: string): unknown => {
+    try { return JSON.parse(text) } catch { return undefined }
+  }
+  const whole = parse(output)
+  const records = whole === undefined ? output.split(/\r?\n/).map(parse) : [whole]
+  const urls = new Set<string>()
+  for (const record of records) {
+    if (typeof record !== "object" || record === null || Array.isArray(record) ||
+      !("returncode" in record) || record.returncode !== 0) continue
+    const prefixed = "mr_stdout" in record || "mr_stderr" in record
+    if (prefixed && ("stdout" in record || "stderr" in record)) continue
+    const stdout = prefixed ? ("mr_stdout" in record ? record.mr_stdout : undefined)
+      : ("stdout" in record ? record.stdout : undefined)
+    const stderr = prefixed ? ("mr_stderr" in record ? record.mr_stderr : undefined)
+      : ("stderr" in record ? record.stderr : undefined)
+    if (typeof stdout !== "string" || typeof stderr !== "string") continue
+    if ("args" in record) {
+      const args = record.args
+      if (!Array.isArray(args) || !args.every((arg): arg is string => typeof arg === "string") ||
+        !/(?:^|\/)glab$/.test(args[0] ?? "")) continue
+      // Captured argv is data, not shell syntax. Quote each literal argument and
+      // reuse direct-command validation, including API method and result identity.
+      const invocation = args.map((arg) => `'${arg.replaceAll("'", "'\\''")}'`).join(" ")
+      for (const reference of requestReferences(invocation, stdout)) {
+        if (reference.provider !== "gitlab" || !reference.value || !mrUrlPattern.test(reference.value)) continue
+        try {
+          const url = new URL(reference.value)
+          if (!url.username && !url.password) urls.add(reference.value)
+        } catch {}
+      }
+      continue
+    }
+    const result = stdout.split(/\r?\n/).filter((line) => line !== "").at(-1)
+    if (!result || !mrUrlPattern.test(result)) continue
+    try {
+      const url = new URL(result)
+      if (url.username || url.password) continue
+      // Bind each URL to the operation in the same subprocess result. Research
+      // JSON, title URLs, and a successful wrapper around a failed CLI are not enough.
+      const project = stderr.match(/^Creating merge request for .+ into .+ in (\S+)[ \t]*\r?$/m)?.[1]
+      const number = stdout.match(/^- Updating merge request !([1-9]\d*)[ \t]*\r?$/m)?.[1]
+      if (project !== url.pathname.split("/-/merge_requests/")[0]?.slice(1) &&
+        number !== url.pathname.split("/").at(-1)) continue
+      urls.add(result)
+    } catch {
+      // Malformed result URLs cannot establish request ownership.
+    }
+  }
+  return [...urls].map((value) => ({ provider: "gitlab", value }))
+}
+
 export function requestReferences(command: unknown, output: unknown): Reference[] {
   const github = prReferences(command, output).map((value): Reference => ({ provider: "github", value }))
   if (typeof command !== "string") return github
+  const scripted = scriptReferences(command, output)
+  if (scripted.length > 0) return [...github, ...scripted]
   const api = apiReference(command, output)
   if (api) return [...github, api]
   const commands = shellCommands(command)

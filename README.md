@@ -7,7 +7,8 @@ Plugins for the [OpenCode](https://opencode.ai) V2 TUI.
 ### [`@kitlangton/opencode-pr-tracker`](./packages/pr-tracker)
 
 Shows GitHub pull requests and GitLab merge requests created or updated by a
-session or its subagents in the sidebar, including the current branch's request.
+session or its subagents in the sidebar, including structured script subprocess
+results. An unrelated request for the checked-out branch is not shown.
 GitLab.com and private self-managed instances use existing `glab` authentication.
 
 ```jsonc

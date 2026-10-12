@@ -28,6 +28,84 @@ describe("prReferences", () => {
 })
 
 describe("requestReferences", () => {
+  test("adopts successful script subprocess results without adopting failed batch entries", () => {
+    const command = `python3 - <<'PY'
+import json, subprocess
+for branch in branches:
+ r = subprocess.run(['glab', 'mr', 'create', '--source-branch', branch, '--yes'], capture_output=True, text=True)
+ print(json.dumps({'mr_stdout': r.stdout, 'mr_stderr': r.stderr, 'returncode': r.returncode}))
+PY`
+    const url = "https://code.example.com/acme/widget/-/merge_requests/42"
+    const other = "https://code.example.com/acme/widget/-/merge_requests/43"
+    const failed = "https://code.example.com/acme/widget/-/merge_requests/44"
+    for (const [stdout, stderr] of [["mr_stdout", "mr_stderr"], ["stdout", "stderr"]]) {
+      const output = [
+        { batch: "first", [stdout!]: `${url}\n`, [stderr!]: "\nCreating merge request for first into master in acme/widget\n", returncode: 0 },
+        { batch: "failed", [stdout!]: `${failed}\n`, [stderr!]: "Creating merge request for failed into master in acme/widget\n", returncode: 1 },
+        { batch: "second", [stdout!]: `${other}\n`, [stderr!]: "Creating merge request for second into master in acme/widget\n", returncode: 0 },
+        { batch: "research", web_url: "https://code.example.com/acme/widget/-/merge_requests/99" },
+      ].map((record) => JSON.stringify(record)).join("\n")
+      assert.deepEqual(requestReferences(command, output), [
+        { provider: "gitlab", value: url }, { provider: "gitlab", value: other },
+      ])
+    }
+  })
+
+  test("adopts script update results without adopting URLs in changed titles", () => {
+    const url = "https://code.example.com/acme/widget/-/merge_requests/42"
+    const mentioned = "https://other.example.com/group/widget/-/merge_requests/99"
+    const output = JSON.stringify({
+      returncode: 0, stderr: "", stdout: `- Updating merge request !42\n✓ updated title to "${mentioned}"\n${url}\n`,
+    }, null, 2)
+    for (const command of ["node update-mr.js", "bash update-mr.sh", "scripts/update-mr.sh", "/work/update-mr.py"])
+      assert.deepEqual(requestReferences(command, output), [{ provider: "gitlab", value: url }], command)
+    assert.deepEqual(requestReferences("python3 update-mr.py", JSON.stringify({
+      returncode: 0, args: ["glab", "mr", "update", url, "--title", "Changed"], stdout: "", stderr: "",
+    })), [{ provider: "gitlab", value: url }])
+  })
+
+  test("uses reported subprocess arguments to distinguish API updates from research", () => {
+    const url = "https://code.example.com/acme/widget/-/merge_requests/42"
+    const record = {
+      returncode: 0, args: ["glab", "api", "projects/2/merge_requests/42", "--method", "PUT", "--field", "description=Quotes ' and $text"],
+      stdout: JSON.stringify({ iid: 42, project_id: 2, web_url: url }), stderr: "",
+    }
+    assert.deepEqual(requestReferences("python3 update-mr.py", JSON.stringify(record)), [{ provider: "gitlab", value: url }])
+    for (const args of [
+      ["glab", "api", "projects/2/merge_requests/42"],
+      ["glab", "api", "projects/2/merge_requests/42", "--method", "DELETE"],
+      ["glab", "api", "projects/2/merge_requests/43", "--method", "PUT"],
+      "glab api projects/2/merge_requests/42 --method PUT",
+      ["glab", "api", null, "--method", "PUT"],
+    ]) assert.deepEqual(requestReferences("python3 update-mr.py", JSON.stringify({ ...record, args })), [], JSON.stringify(args))
+  })
+
+  test("ignores script results without a successful MR operation", () => {
+    const url = "https://code.example.com/acme/widget/-/merge_requests/42"
+    const success = { returncode: 0, stdout: `${url}\n`, stderr: "Creating merge request for feature into master in acme/widget\n" }
+    for (const record of [
+      { ...success, returncode: 1 },
+      { ...success, returncode: "0" },
+      { stdout: success.stdout, stderr: success.stderr },
+      { ...success, stderr: "" },
+      { ...success, stderr: "Creating merge request for feature into master in other/widget\n" },
+      { ...success, stdout: `- Updating merge request !43\n${url}\n`, stderr: "" },
+      { ...success, stdout: `Changed title to ${url}`, stderr: "" },
+      { ...success, stdout: JSON.stringify({ iid: 42, web_url: url }) },
+      { ...success, mr_stdout: success.stdout, mr_stderr: success.stderr },
+      { ...success, stdout: url.replace("code.example.com", "user:secret@code.example.com") },
+      { ...success, args: ["glab", "mr", "view", "42"] },
+      { ...success, args: "glab mr create --yes" },
+    ]) {
+      const output = JSON.stringify(record)
+      assert.deepEqual(requestReferences("python3 create-mr.py", output), [], output)
+    }
+    for (const output of [url, JSON.stringify({ iid: 42, web_url: url }), "not JSON", JSON.stringify([success])])
+      assert.deepEqual(requestReferences("python3 research.py", output), [], output)
+    assert.deepEqual(requestReferences(`printf '%s' '${JSON.stringify(success)}'`, JSON.stringify(success)), [])
+    assert.deepEqual(requestReferences("cat saved-results.json", JSON.stringify(success)), [])
+  })
+
   test("adopts merge requests from GitLab API updates and JSON result filters", () => {
     const url = "https://gitlab.cdn77.eu/net/flop/flop/-/merge_requests/22920"
     const response = JSON.stringify({ iid: 22920, project_id: 2, web_url: url })

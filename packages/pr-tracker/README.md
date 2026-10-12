@@ -23,8 +23,38 @@ Automatically adopted links are saved for the session family and survive TUI
 restarts, even if history recovery is unavailable. Explicit request URLs remain
 usable after their original worktree is removed.
 
-For MRs updated through Python or other scripts, run `/mr-track <GitLab MR URL>`
-in the owning session. The command validates the MR with `glab` and saves its
+Script-based calls are also adopted when the script prints a JSON object or
+JSONL subprocess results with numeric `returncode: 0` and either `stdout`/`stderr`
+or `mr_stdout`/`mr_stderr`. Python, Node, Bun, Deno, Ruby, Perl, shell runners,
+and directly invoked script files are supported. Without captured `args`, a result needs the
+CLI's creation banner for the returned project, or update banner for the returned
+MR number, and a standalone final result URL in stdout. Failed batch entries,
+read-only API responses, and URLs in titles or metadata do not establish a link.
+
+Alternatively, include the subprocess's `args` array to identify the executed
+`glab` operation. API updates require this array; the tracker checks the PUT
+endpoint against the returned MR JSON. A successful `glab mr update <full URL>`
+can be adopted even with empty captured streams. Captured arguments are treated
+as literal data, not evaluated as shell code. For example:
+
+```python
+result = subprocess.run(command, capture_output=True, text=True)
+print(json.dumps({
+    "args": result.args,
+    "returncode": result.returncode,
+    "stdout": result.stdout,
+    "stderr": result.stderr,
+}))
+```
+
+Results must describe operations from that invocation, not replay saved results
+as research. The tracker does not interpret scripts or infer inner success from
+the wrapper's exit status. Raw output without an inner exit code, suppressed
+output without a recoverable URL target, and unsupported script invocations
+remain manual-only.
+
+For these cases, run `/mr-track <GitLab MR URL>` in the owning session.
+The command validates the MR with `glab` and saves its
 canonical URL for that session family. Explicit links survive TUI restarts and
 do not appear in unrelated sessions. Closed and merged MRs remain hidden. Running
 the command from the palette prompts for a URL.
@@ -55,4 +85,5 @@ Only the CLI's result URL is adopted, not URLs echoed in titles. Command recover
 accepts quoted title and description payloads, including shell-generated
 descriptions and `$'…'` strings, without evaluating them. The executable and MR
 operation must remain literal. Quoted command examples, dynamic targets, redirects,
-and shell syntax that cannot be parsed safely are not adopted.
+and shell syntax that cannot be parsed safely are not adopted without a supported
+script subprocess result.

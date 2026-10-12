@@ -11,6 +11,7 @@ const pr: Pr = {
   title: "Recovered child change", state: "OPEN", isDraft: false, statusCheckRollup: [],
 }
 const implicit = process.argv[2] === "implicit"
+const scripted = process.argv[2] === "scripted"
 const rootPr: Pr = {
   ...pr, provider: implicit ? "github" : "gitlab", number: 41,
   url: implicit ? "https://github.com/acme/widget/pull/41" : "https://code.example.com/acme/widget/-/merge_requests/41",
@@ -69,9 +70,12 @@ const context = {
         assert(!(cursor && order), "cursor pages must not also set order")
         if (sessionID === "root" && !cursor) return {
           data: [{ type: "shell", status: "exited", exit: 0,
-            command: implicit ? "gh pr edit --title 'Created from a description'"
+            command: scripted ? "python3 create-mr.py" : implicit ? "gh pr edit --title 'Created from a description'"
               : "glab mr create --title 'Created from a description' --description \"$(cat <<'EOF'\nDetails with $text, `examples`, quotes \"like this\" and (parentheses).\nEOF\n)\" --yes",
-            output: { output: implicit ? "" : rootPr.url },
+            output: { output: scripted ? JSON.stringify({
+              returncode: 0, mr_stdout: `${rootPr.url}\n`,
+              mr_stderr: "Creating merge request for feature into master in acme/widget\n",
+            }) : implicit ? "" : rootPr.url },
           }], cursor: {},
         }
         if (sessionID !== "grandchild" || cursor === "end") return { data: [], cursor: { next: "end" } }
