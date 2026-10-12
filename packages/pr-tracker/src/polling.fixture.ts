@@ -39,7 +39,11 @@ const context = {
   keymap: { layer: () => {} },
   data: {
     on: () => () => {},
-    session: { root: (id: string) => id, family: () => [], message: { list: () => [] } },
+    session: {
+      root: (id: string) => id,
+      get: (id: string) => ({ id, location: { directory: "/example/widget" } }),
+      family: () => [], message: { list: () => [] },
+    },
   },
   ui: {
     router: { current: route },
@@ -101,7 +105,7 @@ try {
   await advance(14_999)
   assert.equal(lookups.length, 0)
   await advance(1)
-  assert(lookups.includes(undefined), "refresh the current branch")
+  assert(!lookups.includes(undefined), "poll only requests linked to the active session family")
   assert(lookups.includes(a.url), "refresh the active session's saved MR")
   assert(!lookups.includes(b.url), "do not poll a mounted background session")
   assert.match(view.captureCharFrame(), /●.*!1 Session A/)

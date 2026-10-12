@@ -1,10 +1,11 @@
 # `@kitlangton/opencode-pr-tracker`
 
-Tracks the checked-out branch's GitHub pull request or GitLab merge request, and
-requests created or updated by a session or its subagents in the OpenCode V2 TUI
-sidebar. Request state and CI status are refreshed when the session tab is
-accessed and every 45 seconds while that session is active. Polling stops when
-you leave the session or the sidebar is removed. Merged and closed requests are
+Tracks GitHub pull requests and GitLab merge requests created or updated by a
+session or its subagents in the OpenCode V2 TUI sidebar. The checked-out branch
+alone does not link a request to a session. Request state and CI status are
+refreshed when the session tab is accessed and every 45 seconds while that
+session is active. Polling stops when you leave the session or the sidebar is
+removed. Merged and closed requests are
 hidden. GitHub requests use `#123`; GitLab requests use `!123`.
 
 The plugin adopts pull requests from successful `gh pr create`, `gh pr edit`,

@@ -2,7 +2,7 @@ import { test } from "bun:test"
 import { strict as assert } from "node:assert"
 import path from "node:path"
 
-for (const mode of ["track", "automatic", "recovered", "automatic-save", "invalid", "lookup", "save", "home", "closed"]) {
+for (const mode of ["track", "unrelated-branch", "automatic", "recovered", "automatic-save", "invalid", "lookup", "save", "home", "closed"]) {
   test(`session MR tracking: ${mode}`, async () => {
     const proc = Bun.spawn([
       process.execPath, "--preload", "@opentui/solid/preload",

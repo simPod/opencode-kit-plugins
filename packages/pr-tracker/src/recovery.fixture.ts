@@ -10,8 +10,10 @@ const pr: Pr = {
   provider: "gitlab", number: 42, url: "https://code.example.com/acme/widget/-/merge_requests/42",
   title: "Recovered child change", state: "OPEN", isDraft: false, statusCheckRollup: [],
 }
+const implicit = process.argv[2] === "implicit"
 const rootPr: Pr = {
-  ...pr, number: 41, url: "https://code.example.com/acme/widget/-/merge_requests/41",
+  ...pr, provider: implicit ? "github" : "gitlab", number: 41,
+  url: implicit ? "https://github.com/acme/widget/pull/41" : "https://code.example.com/acme/widget/-/merge_requests/41",
   title: "Created from a description", statusCheckRollup: [{ status: "IN_PROGRESS" }],
 }
 const closedPr: Pr = {
@@ -24,7 +26,8 @@ mock.module("./request", () => ({
   mrReference,
   fetchPr: async (directory: string, reference?: string | Reference) => {
     const value = typeof reference === "string" ? reference : reference?.value
-    if (directory === "/example/root" && value === rootPr.url) return rootPr
+    if (directory === "/example/root" && (value === rootPr.url ||
+      (implicit && typeof reference === "object" && reference.provider === "github" && value === undefined))) return rootPr
     if (directory === "/example/child" && value === closedPr.url) return closedPr
     return directory === "/example/child" && value === pr.url ? pr : undefined
   },
@@ -66,8 +69,9 @@ const context = {
         assert(!(cursor && order), "cursor pages must not also set order")
         if (sessionID === "root" && !cursor) return {
           data: [{ type: "shell", status: "exited", exit: 0,
-            command: "glab mr create --title 'Created from a description' --description \"$(cat <<'EOF'\nDetails with $text, `examples`, quotes \"like this\" and (parentheses).\nEOF\n)\" --yes",
-            output: { output: rootPr.url },
+            command: implicit ? "gh pr edit --title 'Created from a description'"
+              : "glab mr create --title 'Created from a description' --description \"$(cat <<'EOF'\nDetails with $text, `examples`, quotes \"like this\" and (parentheses).\nEOF\n)\" --yes",
+            output: { output: implicit ? "" : rootPr.url },
           }], cursor: {},
         }
         if (sessionID !== "grandchild" || cursor === "end") return { data: [], cursor: { next: "end" } }
@@ -130,9 +134,10 @@ try {
     await view.renderOnce()
     if ([pr.title, rootPr.title].every((title) => view.captureCharFrame().includes(title))) break
   }
-  assert.match(view.captureCharFrame(), /Merge requests/, "recover persisted history instead of reading the empty TUI cache once")
+  assert(view.captureCharFrame().includes(implicit ? "Pull requests" : "Merge requests"),
+    "recover persisted history instead of reading the empty TUI cache once")
   assert.match(view.captureCharFrame(), /●.*!42 Recovered child change/)
-  assert.match(view.captureCharFrame(), /◌.*!41 Created from a description/)
+  assert.match(view.captureCharFrame(), new RegExp(`◌.*${implicit ? "#" : "!"}41 Created from a description`))
   assert.equal(view.captureCharFrame().match(/!42 /g)?.length, 1, "repeated update results must not duplicate a row")
   assert(!view.captureCharFrame().includes(closedPr.title), "merged requests must stay hidden")
 } finally {

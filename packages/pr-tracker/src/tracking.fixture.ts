@@ -13,13 +13,14 @@ const pr: Pr = {
   title: "Explicitly tracked change", state: mode === "closed" ? "MERGED" : "OPEN",
   isDraft: false, statusCheckRollup: [],
 }
+const branchPr: Pr = { ...pr, number: 23034, url: pr.url.replace(/42$/, "23034"), title: "Unrelated checkout branch" }
 const lookups: string[] = []
 const actual = await import("./request")
 mock.module("./request", () => {
   return {
     ...actual,
     fetchPr: async (directory: string, reference?: string | Reference) => {
-      if (reference === undefined) return undefined
+      if (reference === undefined) return mode === "unrelated-branch" ? branchPr : undefined
       lookups.push(directory)
       return mode === "lookup" ? undefined : pr
     },
@@ -31,7 +32,7 @@ const [durable, setDurable] = createStore<Durable>({ roots: {} })
 const sessions = [
   { id: "root", location: { directory: "/example/parent" }, time: { updated: 1 } },
   { id: "child", parentID: "root", location: { directory: "/example/active-worktree" }, time: { updated: 1 } },
-  { id: "other", location: { directory: "/example/unrelated" }, time: { updated: 1 } },
+  { id: "other", location: { directory: "/example/active-worktree" }, time: { updated: 1 } },
 ]
 const [route, setRoute] = createSignal<ReturnType<Plugin.Context["ui"]["router"]["current"]>>(
   mode === "home" ? { type: "home" } : { type: "session", sessionID: "child" },
@@ -85,7 +86,11 @@ async function start() {
         if (name === "session.shell.ended") shellEnded = run
         return () => {}
       },
-      session: { root: (id: string) => id === "child" ? "root" : id, message: { get: () => undefined } },
+      session: {
+        root: (id: string) => id === "child" ? "root" : id,
+        get: (id: string) => sessions.find((session) => session.id === id),
+        message: { get: () => undefined },
+      },
     },
     ui: {
       router: { current: route },
@@ -127,6 +132,7 @@ function stop() {
 try {
   const initial = await frame()
   assert.equal(initial.includes("!42"), mode === "recovered")
+  assert(!initial.includes("!23034"), "do not show the checkout branch MR without a link to this session family")
   if (mode === "automatic" || mode === "automatic-save") {
     assert(shellEnded !== undefined)
     shellEnded({ location: { directory: "/example/active-worktree" }, data: {
@@ -163,7 +169,9 @@ try {
         assert.deepEqual(unwrap(durable.roots), { root: [pr.url] })
       }
       setRoute({ type: "session", sessionID: "other" })
-      assert(!(await frame()).includes("!42"), "do not attach an MR to unrelated sessions")
+      const unrelated = await frame()
+      assert(!unrelated.includes("!42"), "do not attach an MR to unrelated sessions sharing the same checkout")
+      assert(!unrelated.includes("!23034"), "do not discover the shared checkout branch for an unrelated session")
       stop()
       setRoute({ type: "session", sessionID: "child" })
       historyAvailable = false

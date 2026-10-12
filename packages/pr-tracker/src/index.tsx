@@ -105,20 +105,6 @@ export default Plugin.define({
     const recoveryCheckedAt = new Map<string, number>()
     const checkedAt = new Map<string, number>()
     const inFlight = new Map<string, Promise<Pr | undefined>>()
-    const [current, setCurrent] = createSignal<Pr>()
-    let currentCheckedAt = 0
-    let currentInFlight: Promise<Pr | undefined> | undefined
-
-    const fetchCurrent = (staleOnly: boolean) => {
-      if (staleOnly && Date.now() - currentCheckedAt < STALE_MS) return Promise.resolve(current())
-      if (currentInFlight) return currentInFlight
-      currentInFlight = fetchPr(directory).finally(() => {
-        currentCheckedAt = Date.now()
-        currentInFlight = undefined
-      })
-      return currentInFlight
-    }
-
     const load = (url: string, staleOnly: boolean) => {
       if (staleOnly && Date.now() - (checkedAt.get(url) ?? 0) < STALE_MS) return Promise.resolve(state.prs[url])
       const active = inFlight.get(url)
@@ -142,11 +128,9 @@ export default Plugin.define({
       const prs = (
         await Promise.all(
           references.map((reference) =>
-            reference.provider === "github" && reference.value === undefined && requestDirectory === directory
-              ? fetchCurrent(staleOnly)
-              : reference.value && staleOnly && state.prs[reference.value]
-                ? load(reference.value, true)
-                : fetchPr(requestDirectory, reference),
+            reference.value && staleOnly && state.prs[reference.value]
+              ? load(reference.value, true)
+              : fetchPr(requestDirectory, reference),
           ),
         )
       ).filter((pr) => pr !== undefined)
@@ -190,12 +174,6 @@ export default Plugin.define({
       }).finally(() => recoveryInFlight.delete(sessionID))
       recoveryInFlight.set(sessionID, request)
       return request
-    }
-
-    const refreshCurrent = async () => {
-      if (disposed) return
-      const pr = await fetchCurrent(true)
-      if (!disposed && changed(current(), pr)) setCurrent(pr)
     }
 
     const refresh = async (root: string) => {
@@ -298,7 +276,6 @@ export default Plugin.define({
           const route = context.ui.router.current()
           if (route.type !== "session" || route.sessionID !== props.sessionID) return
           const timer = setInterval(() => {
-            void refreshCurrent()
             void refresh(root())
             void recover(props.sessionID)
           }, POLL_MS)
@@ -307,7 +284,6 @@ export default Plugin.define({
         createEffect(() => {
           const currentRoot = root()
           untrack(() => {
-            void refreshCurrent()
             void refresh(currentRoot)
             void recover(props.sessionID)
           })
@@ -315,8 +291,6 @@ export default Plugin.define({
         const list = () => {
           const urls = [...new Set([...(state.roots[root()] ?? []), ...(tracked.roots[root()] ?? [])])]
           const prs = new Map<string, Pr>()
-          const branch = current()
-          if (branch?.state === "OPEN") prs.set(branch.url, branch)
           for (const url of urls) {
             const pr = state.prs[url]
             if (pr?.state === "OPEN") prs.set(url, pr)
