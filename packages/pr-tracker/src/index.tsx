@@ -165,29 +165,25 @@ export default Plugin.define({
       })
       return root.id
     }
-    const rpc = (context.client as unknown as {
-      rpc: (definition: typeof PrTracker) => {
-        completeUntrack(input: { requestID: string; rootSessionID: string; removed: boolean }): Promise<{ accepted: boolean }>
-        events: {
-          on(name: "untrackRequested", callback: (event: {
-            data: { requestID: string; sessionID: string; rootSessionID: string; url: string }
-            location: { directory: string }
-          }) => void): () => void
-        }
-      }
-    }).rpc(PrTracker)
+    const rpc = context.client.rpc(PrTracker)
     const stopUntrackRequests = rpc.events.on("untrackRequested", (event) => {
       void (async () => {
-        let rootSessionID = event.data.rootSessionID
+        const data = event.data as {
+          requestID: string
+          sessionID: string
+          rootSessionID: string
+          url: string
+        }
+        let rootSessionID = data.rootSessionID
         let removed = false
         try {
-          const url = canonicalMR(event.data.url)
+          const url = canonicalMR(data.url)
           if (url !== undefined) {
-            const session = await context.client.session.get({ sessionID: event.data.sessionID })
+            const session = await context.client.session.get({ sessionID: data.sessionID })
             if (session.location.directory === event.location.directory) {
-              const root = await sessionRoot(event.data.sessionID)
-              if (root.id === event.data.rootSessionID) {
-                rootSessionID = await untrackFamily(event.data.sessionID, url, event.data.rootSessionID) ?? ""
+              const root = await sessionRoot(data.sessionID)
+              if (root.id === data.rootSessionID) {
+                rootSessionID = await untrackFamily(data.sessionID, url, data.rootSessionID) ?? ""
                 removed = rootSessionID !== ""
               }
             }
@@ -196,9 +192,11 @@ export default Plugin.define({
           // A failed validation or storage write returns a negative acknowledgement.
         }
         await rpc.completeUntrack({
-          requestID: event.data.requestID,
+          requestID: data.requestID,
           rootSessionID,
           removed,
+        }, {
+          location: { directory: event.location.directory },
         }).catch(() => {})
       })()
     })

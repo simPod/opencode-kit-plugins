@@ -79,8 +79,7 @@ Configure the package's server entry in the server plugin list and its `./tui`
 entry in the CLI plugin list. Then call the RPC at the exact session location:
 
 ```sh
-opencode api post /api/rpc/kit.pr-tracker/untrack \
-  --param 'location.directory=/workspace/project' \
+opencode api post '/api/rpc/kit.pr-tracker/untrack?location[directory]=/workspace/project' \
   --data '{"input":{"sessionID":"ses_...","url":"https://gitlab.example/group/project/-/merge_requests/42"}}'
 ```
 

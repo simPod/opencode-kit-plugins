@@ -61,7 +61,12 @@ let untrackRequested: ((event: {
   data: { requestID: string; sessionID: string; rootSessionID: string; url: string }
   location: { directory: string }
 }) => void) | undefined
-const acknowledgements: { requestID: string; rootSessionID: string; removed: boolean }[] = []
+const acknowledgements: {
+  requestID: string
+  rootSessionID: string
+  removed: boolean
+  location?: { directory: string }
+}[] = []
 
 const [memory, setMemory] = createStore({ roots: {}, prs: {}, rootIDs: {} })
 const context = {
@@ -78,8 +83,11 @@ const context = {
           return () => {}
         },
       },
-      completeUntrack: async (input: typeof acknowledgements[number]) => {
-        acknowledgements.push(input)
+      completeUntrack: async (
+        input: Omit<typeof acknowledgements[number], "location">,
+        options: { location?: { directory: string } },
+      ) => {
+        acknowledgements.push({ ...input, location: options.location })
         return { accepted: true }
       },
     }),
@@ -207,6 +215,7 @@ try {
       requestID: "request-1",
       rootSessionID: mode === "rpc-wrong-family" ? "other-root" : "root",
       removed: mode === "rpc",
+      location: { directory: mode === "rpc-wrong-location" ? "/example/other" : "/example/project" },
     }])
   } else if (mode === "retrack") {
     await untrack.run(url)
