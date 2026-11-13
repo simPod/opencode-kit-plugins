@@ -1,6 +1,6 @@
 import { mock } from "bun:test"
 import { strict as assert } from "node:assert"
-import type { Plugin } from "@opencode-ai/plugin/tui"
+import type { Plugin } from "@opencode/plugin/tui"
 import { testRender } from "@opentui/solid"
 import { createSignal } from "solid-js"
 import { createStore, produce, unwrap } from "solid-js/store"
@@ -65,7 +65,6 @@ const acknowledgements: { requestID: string; rootSessionID: string; removed: boo
 
 const [memory, setMemory] = createStore({ roots: {}, prs: {}, rootIDs: {} })
 const context = {
-  location: { directory: "/example/project" },
   storage: {
     memory: () => [memory, (mutate: (draft: typeof memory) => void) => setMemory(produce(mutate))],
     store: () => [durable, async (mutate: (draft: Durable) => void) => setDurable(produce(mutate))],
@@ -105,6 +104,7 @@ const context = {
     },
   },
   data: {
+    location: { default: () => ({ directory: "/example/global" }) },
     on: (name: string, callback: (event: ShellEnded) => void) => {
       if (name === "session.shell.ended") shellEnded = callback
       return () => {}
@@ -121,7 +121,7 @@ const context = {
     toast: { show: (toast: typeof toasts[number]) => toasts.push(toast) },
     dialog: { prompt: async () => undefined },
   },
-  theme: { text: { default: "#ffffff", subdued: "#aaaaaa" }, background: { action: { primary: { hovered: "#333333" } } } },
+  theme: { text: { base: "#ffffff", muted: "#aaaaaa" }, background: { action: { primary: { hovered: "#333333" } } } },
 } as unknown as Plugin.Context
 
 let unload = await plugin.setup(context)
@@ -205,7 +205,7 @@ try {
     assert.deepEqual(unwrap(durable.excluded), mode === "rpc" ? { root: [url] } : {})
     assert.deepEqual(acknowledgements, [{
       requestID: "request-1",
-      rootSessionID: mode === "rpc" ? "root" : "",
+      rootSessionID: mode === "rpc-wrong-family" ? "other-root" : "root",
       removed: mode === "rpc",
     }])
   } else if (mode === "retrack") {

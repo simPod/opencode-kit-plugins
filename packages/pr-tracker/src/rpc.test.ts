@@ -9,6 +9,7 @@ type Methods = { untrack?: Handler; completeUntrack?: Handler }
 test("RPC untrack validates session location and waits for the owning TUI acknowledgement", async () => {
   let methods: Methods = {}
   let request: unknown
+  let ackRemoved = true
   const controller = new AbortController()
   const context = {
     location: { directory: "/project" },
@@ -27,10 +28,16 @@ test("RPC untrack validates session location and waits for the owning TUI acknow
           events: {
             emit: async (_name: string, data: unknown) => {
               request = data
-              await methods.completeUntrack!({
-                requestID: (data as { requestID: string }).requestID,
-                rootSessionID: "root",
+              const requestID = (data as { requestID: string }).requestID
+              assert.deepEqual(await methods.completeUntrack!({
+                requestID,
+                rootSessionID: "different-root",
                 removed: true,
+              }, { signal: controller.signal }), { accepted: false })
+              await methods.completeUntrack!({
+                requestID,
+                rootSessionID: "root",
+                removed: ackRemoved,
               }, { signal: controller.signal })
             },
           },
@@ -57,6 +64,21 @@ test("RPC untrack validates session location and waits for the owning TUI acknow
       url: "https://gitlab.example/team/app/-/merge_requests/42",
     })
     assert.deepEqual(result, { removed: true, rootSessionID: "root" })
+    assert.deepEqual(await methods.completeUntrack!({
+      requestID: "unknown-request",
+      rootSessionID: "root",
+      removed: true,
+    }, { signal: controller.signal }), { accepted: false })
+
+    ackRemoved = false
+    const startedAt = Date.now()
+    const negative = await methods.untrack!(
+      { sessionID: "child", url: "https://gitlab.example/team/app/-/merge_requests/42" },
+      { signal: controller.signal },
+    )
+    assert.deepEqual(negative, { removed: false, rootSessionID: "root" })
+    assert(Date.now() - startedAt < 500, "a same-family negative acknowledgement must finish without waiting for timeout")
+
     await assert.rejects(methods.untrack!(
       { sessionID: "other-location", url: "https://gitlab.example/team/app/-/merge_requests/42" },
       { signal: controller.signal },

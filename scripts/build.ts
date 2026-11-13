@@ -16,7 +16,20 @@ const result = await Bun.build({
   target: "bun",
   format: "esm",
   plugins: [createSolidTransformPlugin()],
-  external: ["@opencode-ai/plugin/tui", "@opencode/plugin", "@opencode/plugin/*", "@opentui/core", "@opentui/core-*", "@opentui/keymap"],
+  external: [
+    "@opencode-ai/plugin",
+    "@opencode-ai/plugin/*",
+    "@opencode/plugin",
+    "@opencode/plugin/*",
+    "@opentui/core",
+    "@opentui/core/*",
+    "@opentui/core-*",
+    "@opentui/keymap",
+    "@opentui/solid",
+    "@opentui/solid/*",
+    "solid-js",
+    "solid-js/*",
+  ],
 })
 
 if (!result.success) {

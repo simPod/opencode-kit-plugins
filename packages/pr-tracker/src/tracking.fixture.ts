@@ -1,6 +1,6 @@
 import { mock } from "bun:test"
 import { strict as assert } from "node:assert"
-import type { Plugin } from "@opencode-ai/plugin/tui"
+import type { Plugin } from "@opencode/plugin/tui"
 import { testRender } from "@opentui/solid"
 import { createSignal } from "solid-js"
 import { createStore, produce, unwrap } from "solid-js/store"
@@ -78,7 +78,7 @@ async function start() {
       message: { list: async ({ sessionID }: { sessionID: string }) => {
         if (!historyAvailable) throw new Error("History unavailable after restart")
         return { data: mode === "recovered" && sessionID === "child" ? [{
-          type: "shell", status: "exited", exit: 0, command: "glab mr create", output: { output: pr.url },
+      type: "shell", status: "exited", exit: 0, command: "glab mr create", output: { output: pr.url },
         }] : [], cursor: {} }
       } },
     },
@@ -102,7 +102,7 @@ async function start() {
       toast: { show: (toast: typeof toasts[number]) => toasts.push(toast) },
       dialog: { prompt: async () => undefined },
     },
-    theme: { text: { default: "#ffffff", subdued: "#aaaaaa" }, background: { action: { primary: { hovered: "#333333" } } } },
+    theme: { text: { base: "#ffffff", muted: "#aaaaaa" }, background: { action: { primary: { hovered: "#333333" } } } },
   } as unknown as Plugin.Context
   const unload = await plugin.setup(context)
   assert(sidebar !== undefined)
@@ -134,12 +134,27 @@ try {
   const initial = await frame()
   assert.equal(initial.includes("!42"), mode === "recovered")
   assert(!initial.includes("!23034"), "do not show the checkout branch MR without a link to this session family")
-  if (mode === "automatic" || mode === "automatic-save") {
+  if (mode === "automatic" || mode === "automatic-save" || mode === "moved-session") {
     assert(shellEnded !== undefined)
     shellEnded({ location: { directory: "/example/active-worktree" }, data: {
       sessionID: "child", shell: { status: "exited", exit: 0, command: "glab mr create" }, output: { output: pr.url },
     } })
     assert((await frame()).includes("!42"), "display an MR adopted from a live shell event")
+    if (mode === "moved-session") {
+      const child = sessions.find((session) => session.id === "child")
+      assert(child !== undefined)
+      child.location.directory = "/example/moved-worktree"
+      shellEnded({
+        location: { directory: child.location.directory },
+        data: {
+          sessionID: "child",
+          shell: { status: "exited", exit: 0, command: "glab mr update" },
+          output: { output: pr.url },
+        },
+      })
+      await frame()
+      assert.equal(lookups.at(-1), "/example/moved-worktree", "use the moved session event's directory for MR lookup")
+    }
   } else if (mode === "invalid") {
     for (const input of ["42", "https://github.com/acme/widget/pull/42", "https://user:secret@code.example.com/acme/widget/-/merge_requests/42"])
       await active.command.run(input)

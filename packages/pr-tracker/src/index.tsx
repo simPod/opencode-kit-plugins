@@ -1,6 +1,6 @@
 /** @jsxImportSource @opentui/solid */
 
-import { Plugin } from "@opencode-ai/plugin/tui"
+import { Plugin } from "@opencode/plugin/tui"
 import { createEffect, createSignal, onCleanup, untrack } from "solid-js"
 import { requestReferences, type Reference } from "./reference"
 import { fetchPr, mrReference, type Pr } from "./request"
@@ -79,10 +79,10 @@ function PrRow(props: { context: Plugin.Context; pr: Pr }) {
       <text fg={statusColor(props.pr)} flexShrink={0}>
         {statusIcon(props.pr)}
       </text>
-      <text fg={props.context.theme.text.default} wrapMode="word">
+      <text fg={props.context.theme.text.base} wrapMode="word">
         <span
           style={{
-            fg: hovered() ? props.context.theme.text.default : props.context.theme.text.subdued,
+            fg: hovered() ? props.context.theme.text.base : props.context.theme.text.muted,
           }}
         >
           {props.pr.provider === "gitlab" ? "!" : "#"}{props.pr.number}
@@ -96,12 +96,15 @@ function PrRow(props: { context: Plugin.Context; pr: Pr }) {
 export default Plugin.define({
   id: "kit.pr-tracker",
   setup: async (context) => {
-    const directory = context.location?.directory
-    if (!directory) return
+    const location = context.location ?? context.data.location.default()
+    const directory = location.directory
+    const sessionDirectory = (sessionID: string) =>
+      context.data.session.get(sessionID)?.location.directory ?? directory
     const [state, update] = context.storage.memory("pr-sidebar-v2", {
       initial: {
         roots: {} as Record<string, string[]>,
         prs: {} as Record<string, Pr>,
+        directories: {} as Record<string, string>,
         rootIDs: {} as Record<string, string>,
       },
     })
@@ -175,15 +178,15 @@ export default Plugin.define({
     }).rpc(PrTracker)
     const stopUntrackRequests = rpc.events.on("untrackRequested", (event) => {
       void (async () => {
-        let rootSessionID = ""
+        let rootSessionID = event.data.rootSessionID
         let removed = false
         try {
           const url = canonicalMR(event.data.url)
-          if (event.location.directory === directory && url !== undefined) {
+          if (url !== undefined) {
             const session = await context.client.session.get({ sessionID: event.data.sessionID })
-            if (session.location.directory === directory) {
+            if (session.location.directory === event.location.directory) {
               const root = await sessionRoot(event.data.sessionID)
-              if (root.id === event.data.rootSessionID && root.location.directory === directory) {
+              if (root.id === event.data.rootSessionID) {
                 rootSessionID = await untrackFamily(event.data.sessionID, url, event.data.rootSessionID) ?? ""
                 removed = rootSessionID !== ""
               }
@@ -205,11 +208,11 @@ export default Plugin.define({
     const recoveryCheckedAt = new Map<string, number>()
     const checkedAt = new Map<string, number>()
     const inFlight = new Map<string, Promise<Pr | undefined>>()
-    const load = (url: string, staleOnly: boolean) => {
+    const load = (url: string, staleOnly: boolean, requestDirectory = directory) => {
       if (staleOnly && Date.now() - (checkedAt.get(url) ?? 0) < STALE_MS) return Promise.resolve(state.prs[url])
       const active = inFlight.get(url)
       if (active) return active
-      const request = fetchPr(directory, url).finally(() => {
+      const request = fetchPr(state.directories?.[url] ?? requestDirectory, url).finally(() => {
         checkedAt.set(url, Date.now())
         inFlight.delete(url)
       })
@@ -221,7 +224,7 @@ export default Plugin.define({
       sessionID: string,
       references: Reference[],
       staleOnly = false,
-      requestDirectory = directory,
+      requestDirectory = sessionDirectory(sessionID),
       root = rootOf(sessionID),
     ) => {
       if (disposed || references.length === 0) return
@@ -229,7 +232,7 @@ export default Plugin.define({
         await Promise.all(
           references.map((reference) =>
             reference.value && staleOnly && state.prs[reference.value]
-              ? load(reference.value, true)
+              ? load(reference.value, true, requestDirectory)
               : fetchPr(requestDirectory, reference),
           ),
         )
@@ -257,10 +260,18 @@ export default Plugin.define({
       const previous = state.roots[root] ?? []
       const urls = accepted.map((pr) => canonicalMR(pr.url) ?? pr.url)
       const next = [...new Set([...previous, ...urls])]
-      if (next.length !== previous.length || accepted.some((pr) => changed(state.prs[canonicalMR(pr.url) ?? pr.url], pr)))
+      if (next.length !== previous.length || accepted.some((pr) =>
+        changed(state.prs[canonicalMR(pr.url) ?? pr.url], pr) ||
+        state.directories?.[canonicalMR(pr.url) ?? pr.url] !== requestDirectory
+      ))
         update((draft) => {
           draft.roots[root] = next
-          for (const pr of accepted) draft.prs[canonicalMR(pr.url) ?? pr.url] = pr
+          draft.directories ??= {}
+          for (const pr of accepted) {
+            const url = canonicalMR(pr.url) ?? pr.url
+            draft.prs[url] = pr
+            draft.directories[url] = requestDirectory
+          }
         })
     }
 
@@ -288,7 +299,7 @@ export default Plugin.define({
       if (disposed) return
       const urls = [...new Set([...(state.roots[root] ?? []), ...(tracked.roots[root] ?? [])])]
         .filter((url) => !isExcluded(root, url))
-      const prs = (await Promise.all(urls.map((url) => load(url, true)))).filter(
+      const prs = (await Promise.all(urls.map((url) => load(url, true, sessionDirectory(root))))).filter(
         (pr) => pr !== undefined,
       )
       if (disposed || !prs.some((pr) => changed(state.prs[pr.url], pr))) return
@@ -340,6 +351,8 @@ export default Plugin.define({
               draft.rootIDs ??= {}
               draft.rootIDs[session.id] = root.id
               draft.prs[url] = pr
+              draft.directories ??= {}
+              draft.directories[url] = session.location.directory
             })
             context.ui.toast.show({
               message: pr.state === "OPEN" ? `Tracked !${pr.number}.` : `Tracked !${pr.number}. Closed and merged MRs stay hidden.`,
@@ -382,13 +395,18 @@ export default Plugin.define({
       stopUntrackRequests,
       context.data.on("session.shell.ended", (event) => {
         if (event.data.shell.status !== "exited" || event.data.shell.exit !== 0) return
-        void adopt(event.data.sessionID, requestReferences(event.data.shell.command, event.data.output.output))
+        void adopt(
+          event.data.sessionID,
+          requestReferences(event.data.shell.command, event.data.output.output),
+          false,
+          event.location?.directory,
+        )
       }),
       context.data.on("session.tool.success", (event) => {
         const message = context.data.session.message.get(event.data.sessionID, event.data.assistantMessageID)
         if (message?.type !== "assistant") return
         const part = message.content.find((item) => item.type === "tool" && item.id === event.data.id)
-        if (!part?.state || part.state.status !== "completed") return
+        if (part?.type !== "tool" || part.state.status !== "completed") return
         const input = part.state.input
         const command =
           typeof input === "object" && input !== null && !Array.isArray(input) && "command" in input
@@ -403,6 +421,8 @@ export default Plugin.define({
               .map((item) => item.text)
               .join("\n"),
           ),
+          false,
+          event.location?.directory,
         )
       }),
     ]
@@ -441,7 +461,7 @@ export default Plugin.define({
           <>
             {list().length > 0 ? (
               <box>
-                <text fg={context.theme.text.default}>
+                <text fg={context.theme.text.base}>
                   <b>{list().every((pr) => pr.provider === "gitlab") ? "Merge requests" : "Pull requests"}</b>
                 </text>
                 {list().map((pr) => (

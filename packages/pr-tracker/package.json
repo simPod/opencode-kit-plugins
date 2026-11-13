@@ -41,7 +41,6 @@
   },
   "dependencies": {
     "@opencode/plugin": "2.1.4",
-    "@opencode-ai/plugin": "0.0.0-next-17271",
     "@opentui/core": "0.0.0-20260808-9ecf7c0a",
     "solid-js": "1.9.14"
   },

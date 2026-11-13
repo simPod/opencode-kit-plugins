@@ -1,6 +1,6 @@
 import { mock, spyOn } from "bun:test"
 import { strict as assert } from "node:assert"
-import type { Plugin } from "@opencode-ai/plugin/tui"
+import type { Plugin } from "@opencode/plugin/tui"
 import { testRender } from "@opentui/solid"
 import { createSignal } from "solid-js"
 import { createStore, produce } from "solid-js/store"
@@ -54,7 +54,7 @@ const context = {
     },
   },
   theme: {
-    text: { default: "#ffffff", subdued: "#aaaaaa" },
+    text: { base: "#ffffff", muted: "#aaaaaa" },
     background: { action: { primary: { hovered: "#333333" } } },
   },
 } as unknown as Plugin.Context

@@ -1,6 +1,6 @@
 import { mock } from "bun:test"
 import { strict as assert } from "node:assert"
-import type { Plugin } from "@opencode-ai/plugin/tui"
+import type { Plugin } from "@opencode/plugin/tui"
 import { testRender } from "@opentui/solid"
 import { createStore, produce } from "solid-js/store"
 import type { Reference } from "./reference"
@@ -125,7 +125,7 @@ const context = {
     },
   },
   theme: {
-    text: { default: "#ffffff", subdued: "#aaaaaa" },
+    text: { base: "#ffffff", muted: "#aaaaaa" },
     background: { action: { primary: { hovered: "#333333" } } },
   },
 } as unknown as Plugin.Context
