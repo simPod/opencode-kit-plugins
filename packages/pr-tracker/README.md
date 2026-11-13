@@ -59,6 +59,12 @@ canonical URL for that session family. Explicit links survive TUI restarts and
 do not appear in unrelated sessions. Closed and merged MRs remain hidden. Running
 the command from the palette prompts for a URL.
 
+Run `/mr-untrack <GitLab MR URL>` in the owning session to remove one MR link
+from that session family. Removal does not contact GitLab. The exclusion is
+saved across restarts and prevents script/history recovery from restoring the
+link. Run `/mr-track` again to explicitly restore it. Other links and unrelated
+session families are unchanged.
+
 ```jsonc
 {
   "plugins": ["@kitlangton/opencode-pr-tracker"],

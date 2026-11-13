@@ -35,6 +35,7 @@ mock.module("./request", () => ({
 }))
 const { default: plugin } = await import("./index")
 const [store, setStore] = createStore({ roots: {} as Record<string, string[]>, prs: {} as Record<string, Pr> })
+const [tracked, setTracked] = createStore({ roots: {} as Record<string, string[]>, excluded: {} as Record<string, string[]> })
 const metadata = [
   { id: "root", location: { directory: "/example/root" }, time: { updated: 1 } },
   { id: "child", parentID: "root", location: { directory: "/example/child" }, time: { updated: 2 } },
@@ -47,7 +48,7 @@ const context = {
   location: { directory: "/example/root" },
   storage: {
     memory: () => [store, (mutate: (draft: typeof store) => void) => setStore(produce(mutate))],
-    store: () => [{ roots: {} }, async () => {}],
+    store: () => [tracked, async (mutate: (draft: typeof tracked) => void) => setTracked(produce(mutate))],
   },
   keymap: { layer: () => {} },
   client: {

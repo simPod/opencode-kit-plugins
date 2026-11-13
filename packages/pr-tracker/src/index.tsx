@@ -8,6 +8,18 @@ import { createHistoryReader } from "./history"
 
 const STALE_MS = 15_000
 const POLL_MS = 45_000
+type TrackedRequests = {
+  roots: Record<string, string[]>
+  excluded: Record<string, string[]>
+}
+
+function canonicalMR(url: string) {
+  const parsed = mrReference(url)
+  if (!parsed) return undefined
+  const iid = Number(parsed.value)
+  if (!Number.isSafeInteger(iid) || iid < 1) return undefined
+  return `${parsed.repository}/-/merge_requests/${iid}`
+}
 
 const COLORS: Record<string, string> = {
   OPEN: "#a6da95",
@@ -94,11 +106,42 @@ export default Plugin.define({
     })
     // Keep the existing key so links saved with /mr-track remain available.
     const [tracked, updateTracked] = context.storage.store("manual-mrs-v1", {
-      initial: { roots: {} as Record<string, string[]> },
+      initial: { roots: {} as Record<string, string[]>, excluded: {} as Record<string, string[]> },
     })
 
     let disposed = false
+    let trackedUpdates = Promise.resolve()
+    const pendingExclusions = new Map<string, Set<string>>()
+    const isExcluded = (root: string, url: string) => {
+      const key = canonicalMR(url)
+      return key !== undefined && (
+        tracked.excluded?.[root]?.includes(key) === true ||
+        pendingExclusions.get(root)?.has(key) === true
+      )
+    }
+    const excludeImmediately = (root: string, url: string) => {
+      const keys = pendingExclusions.get(root) ?? new Set<string>()
+      keys.add(url)
+      pendingExclusions.set(root, keys)
+    }
+    const includeImmediately = (root: string, url: string) => {
+      pendingExclusions.get(root)?.delete(url)
+    }
+    const mutateTracked = (mutate: (draft: TrackedRequests) => void) => {
+      const update = trackedUpdates.then(() => updateTracked((draft) => {
+        const value = draft as TrackedRequests
+        value.excluded ??= {}
+        mutate(value)
+      }))
+      trackedUpdates = update.catch(() => {})
+      return update
+    }
     const rootOf = (sessionID: string) => state.rootIDs?.[sessionID] ?? context.data.session.root(sessionID)
+    const sessionRoot = async (sessionID: string) => {
+      let root = await context.client.session.get({ sessionID })
+      while (root.parentID) root = await context.client.session.get({ sessionID: root.parentID })
+      return root
+    }
     const history = createHistoryReader(context.client)
     const abort = new AbortController()
     const recoveryInFlight = new Map<string, Promise<void>>()
@@ -135,24 +178,32 @@ export default Plugin.define({
         )
       ).filter((pr) => pr !== undefined)
       if (disposed || prs.length === 0) return
-      if (prs.some((pr) => !tracked.roots[root]?.includes(pr.url))) {
-        try {
-          await updateTracked((draft) => {
-            draft.roots[root] = [...new Set([...(draft.roots[root] ?? []), ...prs.map((pr) => pr.url)])]
+      let accepted: Pr[] = []
+      try {
+        await mutateTracked((draft) => {
+          accepted = prs.filter((pr) => {
+            const url = canonicalMR(pr.url)
+            return url === undefined || (!draft.excluded[root]?.includes(url) && !pendingExclusions.get(root)?.has(url))
           })
-        } catch {
-          context.ui.toast.show({
-            message: "Cannot save tracked requests. They may disappear after restart.", variant: "error",
-          })
-        }
+          if (accepted.length > 0)
+            draft.roots[root] = [...new Set([...(draft.roots[root] ?? []), ...accepted.map((pr) => canonicalMR(pr.url) ?? pr.url)])]
+        })
+      } catch {
+        context.ui.toast.show({
+          message: "Cannot save tracked requests. They may disappear after restart.", variant: "error",
+        })
+        accepted = prs.filter((pr) => !isExcluded(root, pr.url))
       }
       if (disposed) return
+      accepted = accepted.filter((pr) => !isExcluded(root, pr.url))
+      if (accepted.length === 0) return
       const previous = state.roots[root] ?? []
-      const next = [...new Set([...previous, ...prs.map((pr) => pr.url)])]
-      if (next.length !== previous.length || prs.some((pr) => changed(state.prs[pr.url], pr)))
+      const urls = accepted.map((pr) => canonicalMR(pr.url) ?? pr.url)
+      const next = [...new Set([...previous, ...urls])]
+      if (next.length !== previous.length || accepted.some((pr) => changed(state.prs[canonicalMR(pr.url) ?? pr.url], pr)))
         update((draft) => {
           draft.roots[root] = next
-          for (const pr of prs) draft.prs[pr.url] = pr
+          for (const pr of accepted) draft.prs[canonicalMR(pr.url) ?? pr.url] = pr
         })
     }
 
@@ -179,6 +230,7 @@ export default Plugin.define({
     const refresh = async (root: string) => {
       if (disposed) return
       const urls = [...new Set([...(state.roots[root] ?? []), ...(tracked.roots[root] ?? [])])]
+        .filter((url) => !isExcluded(root, url))
       const prs = (await Promise.all(urls.map((url) => load(url, true)))).filter(
         (pr) => pr !== undefined,
       )
@@ -212,22 +264,25 @@ export default Plugin.define({
           }
           try {
             const session = await context.client.session.get({ sessionID: route.sessionID })
-            let root = session
-            while (root.parentID) root = await context.client.session.get({ sessionID: root.parentID })
+            const root = await sessionRoot(route.sessionID)
             const pr = await fetchPr(session.location.directory, reference)
             if (!pr || pr.provider !== "gitlab") {
               context.ui.toast.show({ message: "Cannot load this MR. Check the URL and glab sign-in.", variant: "error" })
               return
             }
             if (disposed) return
-            await updateTracked((draft) => {
-              draft.roots[root.id] = [...new Set([...(draft.roots[root.id] ?? []), pr.url])]
+            const url = canonicalMR(pr.url)
+            if (!url) throw new Error("Invalid canonical MR URL")
+            await mutateTracked((draft) => {
+              draft.excluded[root.id] = (draft.excluded[root.id] ?? []).filter((excluded) => excluded !== url)
+              draft.roots[root.id] = [...new Set([...(draft.roots[root.id] ?? []), url])]
             })
             if (disposed) return
+            includeImmediately(root.id, url)
             update((draft) => {
               draft.rootIDs ??= {}
               draft.rootIDs[session.id] = root.id
-              draft.prs[pr.url] = pr
+              draft.prs[url] = pr
             })
             context.ui.toast.show({
               message: pr.state === "OPEN" ? `Tracked !${pr.number}.` : `Tracked !${pr.number}. Closed and merged MRs stay hidden.`,
@@ -235,6 +290,46 @@ export default Plugin.define({
             })
           } catch {
             context.ui.toast.show({ message: "Cannot track this MR. Check the session, glab sign-in, and local storage.", variant: "error" })
+          }
+        },
+      }, {
+        id: "kit.pr-tracker.untrack",
+        title: "Stop tracking a merge request",
+        group: "GitLab",
+        palette: true,
+        slash: { name: "mr-untrack", arguments: true },
+        enabled: () => context.ui.router.current().type === "session",
+        run: async (input) => {
+          const route = context.ui.router.current()
+          if (route.type !== "session") {
+            context.ui.toast.show({ message: "Open a session before removing a tracked merge request.", variant: "error" })
+            return
+          }
+          const url = input?.trim() ? canonicalMR(input.trim()) : undefined
+          if (!url) {
+            context.ui.toast.show({ message: "Enter a full GitLab merge request URL.", variant: "error" })
+            return
+          }
+          try {
+            const root = await sessionRoot(route.sessionID)
+            if (disposed) return
+            excludeImmediately(root.id, url)
+            try {
+              await mutateTracked((draft) => {
+                draft.roots[root.id] = (draft.roots[root.id] ?? []).filter((trackedURL) => canonicalMR(trackedURL) !== url)
+                draft.excluded[root.id] = [...new Set([...(draft.excluded[root.id] ?? []), url])]
+              })
+            } catch (error) {
+              includeImmediately(root.id, url)
+              throw error
+            }
+            if (disposed) return
+            update((draft) => {
+              draft.roots[root.id] = (draft.roots[root.id] ?? []).filter((trackedURL) => canonicalMR(trackedURL) !== url)
+            })
+            context.ui.toast.show({ message: `Stopped tracking ${url}.`, variant: "success" })
+          } catch {
+            context.ui.toast.show({ message: "Cannot remove this merge request from the current session family.", variant: "error" })
           }
         },
       }],
@@ -290,6 +385,7 @@ export default Plugin.define({
         })
         const list = () => {
           const urls = [...new Set([...(state.roots[root()] ?? []), ...(tracked.roots[root()] ?? [])])]
+            .filter((url) => !isExcluded(root(), url))
           const prs = new Map<string, Pr>()
           for (const url of urls) {
             const pr = state.prs[url]

@@ -1,5 +1,11 @@
 # @kitlangton/opencode-pr-tracker
 
+## Unreleased
+
+- Add `/mr-untrack <GitLab MR URL>` to remove a request from one session family.
+  Persist exclusions to prevent automatic or historical recovery from restoring
+  the link; explicitly tracking the MR again clears its exclusion.
+
 ## 0.1.1
 
 ### Patch Changes
