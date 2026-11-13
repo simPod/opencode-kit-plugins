@@ -26,6 +26,12 @@ must re-check exclusions before updating runtime sidebar state. Explicitly
 tracking that MR again removes its exclusion and restores the link. Other MRs
 and other session families remain unchanged.
 
+Expose the same removal through the server RPC `kit.pr-tracker.untrack`. The
+server validates the requested session and location, then emits a correlated
+request event to TUI clients at that location. The TUI validates the session
+family and location and performs the write to its own durable store. The RPC
+waits for the TUI acknowledgement and does not keep a server-side mirror.
+
 Recognize bounded script subprocess results as described in
 [Structured script MR results](0002-structured-script-mr-results.md). Keep the
 explicit action for scripts that do not provide this evidence.
@@ -36,4 +42,6 @@ Links survive TUI restarts without adopting arbitrary URL mentions. The
 sidebar refreshes their current GitLab state and hides closed or merged MRs.
 Links and exclusions are local to CLI storage and are not part of server session
 exports. Exclusions apply only within one session family; a new explicit track
-action opts that MR back in.
+action opts that MR back in. Programmatic removal requires both the server
+plugin and a connected TUI plugin at the session's location; without that TUI,
+the RPC times out without changing state.

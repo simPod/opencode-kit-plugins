@@ -5,6 +5,7 @@ import { createEffect, createSignal, onCleanup, untrack } from "solid-js"
 import { requestReferences, type Reference } from "./reference"
 import { fetchPr, mrReference, type Pr } from "./request"
 import { createHistoryReader } from "./history"
+import { PrTracker } from "./rpc"
 
 const STALE_MS = 15_000
 const POLL_MS = 45_000
@@ -142,6 +143,62 @@ export default Plugin.define({
       while (root.parentID) root = await context.client.session.get({ sessionID: root.parentID })
       return root
     }
+    const untrackFamily = async (sessionID: string, url: string, expectedRootID?: string) => {
+      const root = await sessionRoot(sessionID)
+      if (expectedRootID && root.id !== expectedRootID) return undefined
+      excludeImmediately(root.id, url)
+      try {
+        await mutateTracked((draft) => {
+          draft.roots[root.id] = (draft.roots[root.id] ?? []).filter((trackedURL) => canonicalMR(trackedURL) !== url)
+          draft.excluded[root.id] = [...new Set([...(draft.excluded[root.id] ?? []), url])]
+        })
+      } catch (error) {
+        includeImmediately(root.id, url)
+        throw error
+      }
+      if (disposed) return undefined
+      update((draft) => {
+        draft.roots[root.id] = (draft.roots[root.id] ?? []).filter((trackedURL) => canonicalMR(trackedURL) !== url)
+      })
+      return root.id
+    }
+    const rpc = (context.client as unknown as {
+      rpc: (definition: typeof PrTracker) => {
+        completeUntrack(input: { requestID: string; rootSessionID: string; removed: boolean }): Promise<{ accepted: boolean }>
+        events: {
+          on(name: "untrackRequested", callback: (event: {
+            data: { requestID: string; sessionID: string; rootSessionID: string; url: string }
+            location: { directory: string }
+          }) => void): () => void
+        }
+      }
+    }).rpc(PrTracker)
+    const stopUntrackRequests = rpc.events.on("untrackRequested", (event) => {
+      void (async () => {
+        let rootSessionID = ""
+        let removed = false
+        try {
+          const url = canonicalMR(event.data.url)
+          if (event.location.directory === directory && url !== undefined) {
+            const session = await context.client.session.get({ sessionID: event.data.sessionID })
+            if (session.location.directory === directory) {
+              const root = await sessionRoot(event.data.sessionID)
+              if (root.id === event.data.rootSessionID && root.location.directory === directory) {
+                rootSessionID = await untrackFamily(event.data.sessionID, url, event.data.rootSessionID) ?? ""
+                removed = rootSessionID !== ""
+              }
+            }
+          }
+        } catch {
+          // A failed validation or storage write returns a negative acknowledgement.
+        }
+        await rpc.completeUntrack({
+          requestID: event.data.requestID,
+          rootSessionID,
+          removed,
+        }).catch(() => {})
+      })()
+    })
     const history = createHistoryReader(context.client)
     const abort = new AbortController()
     const recoveryInFlight = new Map<string, Promise<void>>()
@@ -311,22 +368,8 @@ export default Plugin.define({
             return
           }
           try {
-            const root = await sessionRoot(route.sessionID)
+            await untrackFamily(route.sessionID, url)
             if (disposed) return
-            excludeImmediately(root.id, url)
-            try {
-              await mutateTracked((draft) => {
-                draft.roots[root.id] = (draft.roots[root.id] ?? []).filter((trackedURL) => canonicalMR(trackedURL) !== url)
-                draft.excluded[root.id] = [...new Set([...(draft.excluded[root.id] ?? []), url])]
-              })
-            } catch (error) {
-              includeImmediately(root.id, url)
-              throw error
-            }
-            if (disposed) return
-            update((draft) => {
-              draft.roots[root.id] = (draft.roots[root.id] ?? []).filter((trackedURL) => canonicalMR(trackedURL) !== url)
-            })
             context.ui.toast.show({ message: `Stopped tracking ${url}.`, variant: "success" })
           } catch {
             context.ui.toast.show({ message: "Cannot remove this merge request from the current session family.", variant: "error" })
@@ -336,6 +379,7 @@ export default Plugin.define({
     }))
 
     const unsubscribers = [
+      stopUntrackRequests,
       context.data.on("session.shell.ended", (event) => {
         if (event.data.shell.status !== "exited" || event.data.shell.exit !== 0) return
         void adopt(event.data.sessionID, requestReferences(event.data.shell.command, event.data.output.output))

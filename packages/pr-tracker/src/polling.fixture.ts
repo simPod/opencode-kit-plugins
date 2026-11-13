@@ -37,6 +37,7 @@ const context = {
     store: () => [{ roots: {} }, async () => {}],
   },
   keymap: { layer: () => {} },
+  client: { rpc: () => ({ events: { on: () => () => {} }, completeUntrack: async () => ({ accepted: true }) }) },
   data: {
     on: () => () => {},
     session: {

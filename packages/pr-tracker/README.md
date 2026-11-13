@@ -65,6 +65,28 @@ saved across restarts and prevents script/history recovery from restoring the
 link. Run `/mr-track` again to explicitly restore it. Other links and unrelated
 session families are unchanged.
 
+### Programmatic removal API
+
+The server plugin exposes the typed RPC method `kit.pr-tracker.untrack`. It
+accepts `{ sessionID: string, url: string }` and returns
+`{ removed: boolean, rootSessionID: string }`. The server validates the session
+and its location. The owning TUI plugin validates the same family and location,
+then writes the exclusion to its own durable store. The call waits up to 15
+seconds for a TUI plugin at that location; it fails if no TUI instance is
+connected. No server-side copy of the tracking store is created.
+
+Configure the package's server entry in the server plugin list and its `./tui`
+entry in the CLI plugin list. Then call the RPC at the exact session location:
+
+```sh
+opencode api post /api/rpc/kit.pr-tracker/untrack \
+  --param 'location.directory=/workspace/project' \
+  --data '{"input":{"sessionID":"ses_...","url":"https://gitlab.example/group/project/-/merge_requests/42"}}'
+```
+
+The location must match the session's owning OpenCode location. The request
+fails rather than changing another location or session family.
+
 ```jsonc
 {
   "plugins": ["@kitlangton/opencode-pr-tracker"],

@@ -2,7 +2,7 @@ import { test } from "bun:test"
 import { strict as assert } from "node:assert"
 import path from "node:path"
 
-for (const mode of ["remove", "idempotent", "family-isolation", "remove-recovery", "in-flight", "retrack", "invalid", "not-found"]) {
+for (const mode of ["remove", "idempotent", "family-isolation", "remove-recovery", "in-flight", "retrack", "invalid", "not-found", "rpc", "rpc-wrong-location", "rpc-wrong-family"]) {
   test(`session MR untracking: ${mode}`, async () => {
     const proc = Bun.spawn([
       process.execPath, "--preload", "@opentui/solid/preload",

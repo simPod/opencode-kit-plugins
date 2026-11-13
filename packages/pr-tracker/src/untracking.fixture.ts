@@ -36,11 +36,13 @@ if (mode === "family-isolation") {
   setDurable("roots", "other", [url])
 }
 if (mode === "remove-recovery") setDurable("roots", "root", [url])
+if (mode === "rpc" || mode === "rpc-wrong-location" || mode === "rpc-wrong-family")
+  setDurable("roots", "root", [url])
 
 const sessions = [
-  { id: "root", location: { directory: "/example/root" }, time: { updated: 1 } },
-  { id: "child", parentID: "root", location: { directory: "/example/child" }, time: { updated: 1 } },
-  { id: "other", location: { directory: "/example/child" }, time: { updated: 1 } },
+  { id: "root", location: { directory: "/example/project" }, time: { updated: 1 } },
+  { id: "child", parentID: "root", location: { directory: "/example/project" }, time: { updated: 1 } },
+  { id: "other", location: { directory: "/example/project" }, time: { updated: 1 } },
 ]
 const [route, setRoute] = createSignal<ReturnType<Plugin.Context["ui"]["router"]["current"]>>(
   { type: "session", sessionID: "child" },
@@ -55,6 +57,11 @@ type ShellEnded = {
   data: { sessionID: string; shell: { status: string; exit: number; command: string }; output: { output: string } }
 }
 let shellEnded: ((event: ShellEnded) => void) | undefined
+let untrackRequested: ((event: {
+  data: { requestID: string; sessionID: string; rootSessionID: string; url: string }
+  location: { directory: string }
+}) => void) | undefined
+const acknowledgements: { requestID: string; rootSessionID: string; removed: boolean }[] = []
 
 const [memory, setMemory] = createStore({ roots: {}, prs: {}, rootIDs: {} })
 const context = {
@@ -65,6 +72,18 @@ const context = {
   },
   keymap: { layer: (factory: Layer) => { layer = factory } },
   client: {
+    rpc: () => ({
+      events: {
+        on: (_name: string, callback: typeof untrackRequested) => {
+          untrackRequested = callback
+          return () => {}
+        },
+      },
+      completeUntrack: async (input: typeof acknowledgements[number]) => {
+        acknowledgements.push(input)
+        return { accepted: true }
+      },
+    }),
     session: {
       get: async ({ sessionID }: { sessionID: string }) => {
         if (mode === "not-found") throw new Error("Session not found")
@@ -171,6 +190,24 @@ try {
     setRoute({ type: "session", sessionID: "other" })
     await frame()
     assert(view.captureCharFrame().includes("!42"))
+  } else if (mode === "rpc" || mode === "rpc-wrong-location" || mode === "rpc-wrong-family") {
+    assert(untrackRequested !== undefined)
+    untrackRequested({
+      data: {
+        requestID: "request-1", sessionID: "child",
+        rootSessionID: mode === "rpc-wrong-family" ? "other-root" : "root",
+        url,
+      },
+      location: { directory: mode === "rpc-wrong-location" ? "/example/other" : "/example/project" },
+    })
+    await frame()
+    assert.deepEqual(unwrap(durable.roots), { root: mode === "rpc" ? [] : [url] })
+    assert.deepEqual(unwrap(durable.excluded), mode === "rpc" ? { root: [url] } : {})
+    assert.deepEqual(acknowledgements, [{
+      requestID: "request-1",
+      rootSessionID: mode === "rpc" ? "root" : "",
+      removed: mode === "rpc",
+    }])
   } else if (mode === "retrack") {
     await untrack.run(url)
     await track.run(url)

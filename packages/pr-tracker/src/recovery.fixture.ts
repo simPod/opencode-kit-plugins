@@ -52,6 +52,7 @@ const context = {
   },
   keymap: { layer: () => {} },
   client: {
+    rpc: () => ({ events: { on: () => () => {} }, completeUntrack: async () => ({ accepted: true }) }),
     session: {
       get: async ({ sessionID }: { sessionID: string }) => {
         const session = metadata.find((member) => member.id === sessionID)

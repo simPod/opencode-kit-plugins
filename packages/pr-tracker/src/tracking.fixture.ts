@@ -64,6 +64,7 @@ async function start() {
     },
     keymap: { layer: (factory: Layer) => { layer = factory } },
     client: {
+      rpc: () => ({ events: { on: () => () => {} }, completeUntrack: async () => ({ accepted: true }) }),
       session: {
         get: async ({ sessionID }: { sessionID: string }) => {
           const session = sessions.find((item) => item.id === sessionID)
