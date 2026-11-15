@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto"
 import { Plugin } from "@opencode/plugin"
+import { canonicalRequestUrl } from "./request"
 import { PrTracker } from "./rpc"
 
 type Completion = {
@@ -22,21 +23,8 @@ export default Plugin.define({
       untrack: async (raw, rpc) => {
         const { sessionID, url } = raw as { sessionID: string; url: string }
         if (rpc.signal.aborted) throw rpc.signal.reason
-        const parsed = (() => {
-          try {
-            const value = new URL(url)
-            const match = value.pathname.match(/^\/(.+)\/-\/merge_requests\/(\d+)\/?$/)
-            const iid = match ? Number(match[2]) : NaN
-            if (
-              !match || !["https:", "http:"].includes(value.protocol) ||
-              value.username || value.password || !Number.isSafeInteger(iid) || iid < 1
-            ) return undefined
-            return `${value.origin}/${match[1]}/-/merge_requests/${iid}`
-          } catch {
-            return undefined
-          }
-        })()
-        if (!parsed) throw new Error("Expected a full GitLab merge request URL")
+        const parsed = canonicalRequestUrl(url)
+        if (!parsed) throw new Error("Expected a full GitHub pull request or GitLab merge request URL")
         const session = await context.session.get({ sessionID }, { signal: rpc.signal })
         if (session.location.directory !== context.location.directory)
           throw new Error("The session does not belong to this OpenCode location")

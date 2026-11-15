@@ -2,8 +2,8 @@ import { test } from "bun:test"
 import { strict as assert } from "node:assert"
 import path from "node:path"
 
-for (const mode of ["remove", "idempotent", "family-isolation", "remove-recovery", "in-flight", "retrack", "invalid", "not-found", "rpc", "rpc-wrong-location", "rpc-wrong-family"]) {
-  test(`session MR untracking: ${mode}`, async () => {
+for (const mode of ["remove", "idempotent", "family-isolation", "remove-recovery", "github-remove-recovery", "in-flight", "retrack", "invalid", "not-found", "rpc", "rpc-wrong-location", "rpc-wrong-family"]) {
+  test(`session request untracking: ${mode}`, async () => {
     const proc = Bun.spawn([
       process.execPath, "--preload", "@opentui/solid/preload",
       path.join(import.meta.dir, "untracking.fixture.ts"), mode,

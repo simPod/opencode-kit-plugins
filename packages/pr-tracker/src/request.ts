@@ -42,6 +42,29 @@ export function mrReference(value: string): Reference | undefined {
   }
 }
 
+export function canonicalRequestUrl(value: string): string | undefined {
+  try {
+    const url = new URL(value)
+    if (!["https:", "http:"].includes(url.protocol) || url.username || url.password) return undefined
+
+    if (url.hostname === "github.com") {
+      if (url.protocol !== "https:" || url.port) return undefined
+      const match = url.pathname.match(/^\/([^/]+)\/([^/]+)\/pull\/(\d+)\/?$/)
+      const number = match ? Number(match[3]) : NaN
+      if (!match || !Number.isSafeInteger(number) || number < 1) return undefined
+      return `https://github.com/${match[1]}/${match[2]}/pull/${number}`
+    }
+
+    const reference = mrReference(value)
+    if (!reference) return undefined
+    const iid = Number(reference.value)
+    if (!Number.isSafeInteger(iid) || iid < 1) return undefined
+    return `${reference.repository}/-/merge_requests/${iid}`
+  } catch {
+    return undefined
+  }
+}
+
 async function github(directory: string, reference?: Reference): Promise<Pr | undefined> {
   const parsed = await run(
     reference?.value?.startsWith("https://") && !existsSync(directory) ? process.cwd() : directory,

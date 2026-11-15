@@ -8,10 +8,21 @@ import type { Reference } from "./reference"
 import type { Pr } from "./request"
 
 const mode = process.argv[2]
-const url = "https://code.example.com/acme/widget/-/merge_requests/42"
-const otherURL = "https://code.example.com/acme/widget/-/merge_requests/43"
+const github = mode === "github-remove-recovery"
+const url = github
+  ? "https://github.com/phpstan/phpstan-doctrine/pull/814"
+  : "https://code.example.com/acme/widget/-/merge_requests/42"
+const otherURL = github
+  ? "https://github.com/phpstan/phpstan-doctrine/pull/815"
+  : "https://code.example.com/acme/widget/-/merge_requests/43"
 const pr: Pr = {
-  provider: "gitlab", number: 42, url, title: "Tracked change", state: "OPEN", isDraft: false, statusCheckRollup: [],
+  provider: github ? "github" : "gitlab",
+  number: github ? 814 : 42,
+  url,
+  title: "Tracked change",
+  state: "OPEN",
+  isDraft: false,
+  statusCheckRollup: [],
 }
 const actual = await import("./request")
 let completeFetch: ((value: Pr) => void) | undefined
@@ -35,7 +46,7 @@ if (mode === "family-isolation") {
   setDurable("roots", "root", [url])
   setDurable("roots", "other", [url])
 }
-if (mode === "remove-recovery") setDurable("roots", "root", [url])
+if (mode === "remove-recovery" || mode === "github-remove-recovery") setDurable("roots", "root", [url])
 if (mode === "rpc" || mode === "rpc-wrong-location" || mode === "rpc-wrong-family")
   setDurable("roots", "root", [url])
 
@@ -104,8 +115,8 @@ const context = {
     },
     message: {
       list: async ({ sessionID }: { sessionID: string }) => ({
-      data: (mode === "remove-recovery" || mode === "in-flight") && sessionID === "child" ? [{
-          type: "shell", status: "exited", exit: 0, command: "glab mr create", output: { output: url },
+      data: (mode === "remove-recovery" || mode === "github-remove-recovery" || mode === "in-flight") && sessionID === "child" ? [{
+          type: "shell", status: "exited", exit: 0, command: github ? "gh pr create" : "glab mr create", output: { output: url },
         }] : [],
         cursor: {},
       }),
@@ -175,7 +186,7 @@ try {
     assert.deepEqual(unwrap(durable.roots), { root: [] })
     assert.deepEqual(unwrap(durable.excluded), { root: [url] })
     assert(!view.captureCharFrame().includes("!42"), view.captureCharFrame())
-  } else if (mode === "remove-recovery") {
+  } else if (mode === "remove-recovery" || mode === "github-remove-recovery") {
     await frame()
     await untrack.run(url)
     assert.deepEqual(unwrap(durable.roots), { root: [] })
@@ -183,7 +194,10 @@ try {
     await restart()
     await frame()
     assert.deepEqual(unwrap(durable.roots), { root: [] })
-    assert(!view.captureCharFrame().includes("!42"), "removal must remain in effect after restart and history recovery")
+    assert(
+      !view.captureCharFrame().includes(github ? "#814" : "!42"),
+      "removal must remain in effect after restart and history recovery",
+    )
   } else if (mode === "remove" || mode === "idempotent") {
     await frame()
     await untrack.run(`${url}/`)

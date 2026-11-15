@@ -79,12 +79,31 @@ test("RPC untrack validates session location and waits for the owning TUI acknow
     assert.deepEqual(negative, { removed: false, rootSessionID: "root" })
     assert(Date.now() - startedAt < 500, "a same-family negative acknowledgement must finish without waiting for timeout")
 
+    ackRemoved = true
+    const github = await methods.untrack!(
+      {
+        sessionID: "child",
+        url: "https://github.com/phpstan/phpstan-doctrine/pull/814/?tab=files#discussion",
+      },
+      { signal: controller.signal },
+    )
+    assert.deepEqual(github, { removed: true, rootSessionID: "root" })
+    assert.equal((request as { url: string }).url, "https://github.com/phpstan/phpstan-doctrine/pull/814")
+
     await assert.rejects(methods.untrack!(
       { sessionID: "other-location", url: "https://gitlab.example/team/app/-/merge_requests/42" },
       { signal: controller.signal },
     ))
     await assert.rejects(methods.untrack!(
       { sessionID: "child", url: "42" },
+      { signal: controller.signal },
+    ))
+    await assert.rejects(methods.untrack!(
+      { sessionID: "child", url: "https://github.example/team/app/pull/42" },
+      { signal: controller.signal },
+    ))
+    await assert.rejects(methods.untrack!(
+      { sessionID: "child", url: "https://user:password@github.com/team/app/pull/42" },
       { signal: controller.signal },
     ))
   } finally {

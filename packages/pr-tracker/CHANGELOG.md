@@ -2,9 +2,9 @@
 
 ## Unreleased
 
-- Add `/mr-untrack <GitLab MR URL>` to remove a request from one session family.
-  Persist exclusions to prevent automatic or historical recovery from restoring
-  the link; explicitly tracking the MR again clears its exclusion.
+- Add GitHub pull request URLs to `/mr-untrack`, alongside GitLab merge request
+  URLs. Persist exclusions to prevent automatic or historical recovery from
+  restoring the link; explicitly tracking a GitLab MR again clears its exclusion.
 - Expose the same operation through the `kit.pr-tracker.untrack` server RPC,
   which validates the session location and waits for the owning TUI plugin to
   persist the removal.

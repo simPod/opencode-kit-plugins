@@ -59,10 +59,11 @@ canonical URL for that session family. Explicit links survive TUI restarts and
 do not appear in unrelated sessions. Closed and merged MRs remain hidden. Running
 the command from the palette prompts for a URL.
 
-Run `/mr-untrack <GitLab MR URL>` in the owning session to remove one MR link
-from that session family. Removal does not contact GitLab. The exclusion is
-saved across restarts and prevents script/history recovery from restoring the
-link. Run `/mr-track` again to explicitly restore it. Other links and unrelated
+Run `/mr-untrack <GitLab MR URL or GitHub PR URL>` in the owning session to
+remove one request link from that session family. Removal does not contact
+GitHub or GitLab and does not change the remote request. The exclusion is saved
+across restarts and prevents command or history recovery from restoring the
+link. `/mr-track` can explicitly restore GitLab links. Other links and unrelated
 session families are unchanged.
 
 ### Programmatic removal API
@@ -70,9 +71,12 @@ session families are unchanged.
 The server plugin exposes the typed RPC method `kit.pr-tracker.untrack`. It
 accepts `{ sessionID: string, url: string }` and returns
 `{ removed: boolean, rootSessionID: string }`. The server validates the session
-and its location. The owning TUI plugin validates the same family and location,
-then writes the exclusion to its own durable store. The call waits up to 15
-seconds for a TUI plugin at that location; it fails if no TUI instance is
+and its location, and accepts full GitHub pull request URLs on `github.com` or
+GitLab merge request URLs on GitLab hosts. It rejects credentials and
+unsupported hosts. Trailing slashes, query strings, and fragments do not affect
+the canonical request URL. The owning TUI plugin validates the same family and
+location, then writes the exclusion to its own durable store. The call waits up
+to 15 seconds for a TUI plugin at that location; it fails if no TUI instance is
 connected. No server-side copy of the tracking store is created.
 
 Configure the package's server entry in the server plugin list and its `./tui`
@@ -80,7 +84,7 @@ entry in the CLI plugin list. Then call the RPC at the exact session location:
 
 ```sh
 opencode api post '/api/rpc/kit.pr-tracker/untrack?location[directory]=/workspace/project' \
-  --data '{"input":{"sessionID":"ses_...","url":"https://gitlab.example/group/project/-/merge_requests/42"}}'
+  --data '{"input":{"sessionID":"ses_...","url":"https://github.com/phpstan/phpstan-doctrine/pull/814"}}'
 ```
 
 The location must match the session's owning OpenCode location. The request

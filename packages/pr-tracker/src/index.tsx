@@ -3,7 +3,7 @@
 import { Plugin } from "@opencode/plugin/tui"
 import { createEffect, createSignal, onCleanup, untrack } from "solid-js"
 import { requestReferences, type Reference } from "./reference"
-import { fetchPr, mrReference, type Pr } from "./request"
+import { canonicalRequestUrl, fetchPr, mrReference, type Pr } from "./request"
 import { createHistoryReader } from "./history"
 import { PrTracker } from "./rpc"
 
@@ -12,14 +12,6 @@ const POLL_MS = 45_000
 type TrackedRequests = {
   roots: Record<string, string[]>
   excluded: Record<string, string[]>
-}
-
-function canonicalMR(url: string) {
-  const parsed = mrReference(url)
-  if (!parsed) return undefined
-  const iid = Number(parsed.value)
-  if (!Number.isSafeInteger(iid) || iid < 1) return undefined
-  return `${parsed.repository}/-/merge_requests/${iid}`
 }
 
 const COLORS: Record<string, string> = {
@@ -117,7 +109,7 @@ export default Plugin.define({
     let trackedUpdates = Promise.resolve()
     const pendingExclusions = new Map<string, Set<string>>()
     const isExcluded = (root: string, url: string) => {
-      const key = canonicalMR(url)
+      const key = canonicalRequestUrl(url)
       return key !== undefined && (
         tracked.excluded?.[root]?.includes(key) === true ||
         pendingExclusions.get(root)?.has(key) === true
@@ -152,7 +144,7 @@ export default Plugin.define({
       excludeImmediately(root.id, url)
       try {
         await mutateTracked((draft) => {
-          draft.roots[root.id] = (draft.roots[root.id] ?? []).filter((trackedURL) => canonicalMR(trackedURL) !== url)
+          draft.roots[root.id] = (draft.roots[root.id] ?? []).filter((trackedURL) => canonicalRequestUrl(trackedURL) !== url)
           draft.excluded[root.id] = [...new Set([...(draft.excluded[root.id] ?? []), url])]
         })
       } catch (error) {
@@ -161,7 +153,7 @@ export default Plugin.define({
       }
       if (disposed) return undefined
       update((draft) => {
-        draft.roots[root.id] = (draft.roots[root.id] ?? []).filter((trackedURL) => canonicalMR(trackedURL) !== url)
+        draft.roots[root.id] = (draft.roots[root.id] ?? []).filter((trackedURL) => canonicalRequestUrl(trackedURL) !== url)
       })
       return root.id
     }
@@ -177,7 +169,7 @@ export default Plugin.define({
         let rootSessionID = data.rootSessionID
         let removed = false
         try {
-          const url = canonicalMR(data.url)
+          const url = canonicalRequestUrl(data.url)
           if (url !== undefined) {
             const session = await context.client.session.get({ sessionID: data.sessionID })
             if (session.location.directory === event.location.directory) {
@@ -240,11 +232,11 @@ export default Plugin.define({
       try {
         await mutateTracked((draft) => {
           accepted = prs.filter((pr) => {
-            const url = canonicalMR(pr.url)
+            const url = canonicalRequestUrl(pr.url)
             return url === undefined || (!draft.excluded[root]?.includes(url) && !pendingExclusions.get(root)?.has(url))
           })
           if (accepted.length > 0)
-            draft.roots[root] = [...new Set([...(draft.roots[root] ?? []), ...accepted.map((pr) => canonicalMR(pr.url) ?? pr.url)])]
+            draft.roots[root] = [...new Set([...(draft.roots[root] ?? []), ...accepted.map((pr) => canonicalRequestUrl(pr.url) ?? pr.url)])]
         })
       } catch {
         context.ui.toast.show({
@@ -256,17 +248,17 @@ export default Plugin.define({
       accepted = accepted.filter((pr) => !isExcluded(root, pr.url))
       if (accepted.length === 0) return
       const previous = state.roots[root] ?? []
-      const urls = accepted.map((pr) => canonicalMR(pr.url) ?? pr.url)
+      const urls = accepted.map((pr) => canonicalRequestUrl(pr.url) ?? pr.url)
       const next = [...new Set([...previous, ...urls])]
       if (next.length !== previous.length || accepted.some((pr) =>
-        changed(state.prs[canonicalMR(pr.url) ?? pr.url], pr) ||
-        state.directories?.[canonicalMR(pr.url) ?? pr.url] !== requestDirectory
+        changed(state.prs[canonicalRequestUrl(pr.url) ?? pr.url], pr) ||
+        state.directories?.[canonicalRequestUrl(pr.url) ?? pr.url] !== requestDirectory
       ))
         update((draft) => {
           draft.roots[root] = next
           draft.directories ??= {}
           for (const pr of accepted) {
-            const url = canonicalMR(pr.url) ?? pr.url
+            const url = canonicalRequestUrl(pr.url) ?? pr.url
             draft.prs[url] = pr
             draft.directories[url] = requestDirectory
           }
@@ -337,7 +329,7 @@ export default Plugin.define({
               return
             }
             if (disposed) return
-            const url = canonicalMR(pr.url)
+            const url = canonicalRequestUrl(pr.url)
             if (!url) throw new Error("Invalid canonical MR URL")
             await mutateTracked((draft) => {
               draft.excluded[root.id] = (draft.excluded[root.id] ?? []).filter((excluded) => excluded !== url)
@@ -362,20 +354,20 @@ export default Plugin.define({
         },
       }, {
         id: "kit.pr-tracker.untrack",
-        title: "Stop tracking a merge request",
-        group: "GitLab",
+        title: "Stop tracking a pull request or merge request",
+        group: "Pull requests",
         palette: true,
         slash: { name: "mr-untrack", arguments: true },
         enabled: () => context.ui.router.current().type === "session",
         run: async (input) => {
           const route = context.ui.router.current()
           if (route.type !== "session") {
-            context.ui.toast.show({ message: "Open a session before removing a tracked merge request.", variant: "error" })
+            context.ui.toast.show({ message: "Open a session before removing a tracked request.", variant: "error" })
             return
           }
-          const url = input?.trim() ? canonicalMR(input.trim()) : undefined
+          const url = input?.trim() ? canonicalRequestUrl(input.trim()) : undefined
           if (!url) {
-            context.ui.toast.show({ message: "Enter a full GitLab merge request URL.", variant: "error" })
+            context.ui.toast.show({ message: "Enter a full GitHub pull request or GitLab merge request URL.", variant: "error" })
             return
           }
           try {
