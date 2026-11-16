@@ -79,7 +79,7 @@ function PrRow(props: { context: Plugin.Context; pr: Pr }) {
         >
           {props.pr.provider === "gitlab" ? "!" : "#"}{props.pr.number}
         </span>{" "}
-        {props.pr.hasConflicts && <span style={{ fg: COLORS.CLOSED }}>[conflicts] </span>}
+        {props.pr.hasConflicts && <span style={{ fg: COLORS.CLOSED }}>× </span>}
         {props.pr.title}
       </text>
     </box>

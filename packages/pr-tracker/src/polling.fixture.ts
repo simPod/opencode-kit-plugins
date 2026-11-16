@@ -114,13 +114,13 @@ try {
   assert(!lookups.includes(undefined), "poll only requests linked to the active session family")
   assert(lookups.includes(a.url), "refresh the active session's saved MR")
   assert(!lookups.includes(b.url), "do not poll a mounted background session")
-  assert.match(view.captureCharFrame(), /●.*!1 \[conflicts\] Session A/)
+  assert.match(view.captureCharFrame(), /●.*!1 × Session A/)
   assert.equal(store.prs[a.url]?.statusCheckRollup[0]?.conclusion, "SUCCESS")
 
   hasConflicts = false
   await advance(45_000)
   assert.match(view.captureCharFrame(), /●.*!1 Session A/)
-  assert.doesNotMatch(view.captureCharFrame(), /\[conflicts\]/)
+  assert.doesNotMatch(view.captureCharFrame(), /×/)
 
   lookups.length = 0
   setRoute({ type: "session", sessionID: "B" })
