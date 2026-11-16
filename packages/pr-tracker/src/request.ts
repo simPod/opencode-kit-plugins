@@ -9,6 +9,7 @@ export type Pr = {
   state: string
   title: string
   isDraft: boolean
+  hasConflicts?: boolean
   mergedAt?: string
   statusCheckRollup: Check[]
 }
@@ -73,12 +74,15 @@ async function github(directory: string, reference?: Reference): Promise<Pr | un
     "view",
     ...(reference?.value ? [reference.value] : []),
     "--json",
-    "number,url,state,title,isDraft,mergedAt,statusCheckRollup",
+    "number,url,state,title,isDraft,mergedAt,statusCheckRollup,mergeable",
   )
   if (typeof parsed !== "object" || parsed === null) return undefined
   if (!("number" in parsed) || typeof parsed.number !== "number" || !("url" in parsed) || typeof parsed.url !== "string")
     return undefined
-  return parsed as Pr
+  return {
+    ...(parsed as Pr),
+    hasConflicts: "mergeable" in parsed && parsed.mergeable === "CONFLICTING",
+  }
 }
 
 async function gitlab(directory: string, reference?: Reference): Promise<Pr | undefined> {
@@ -118,6 +122,8 @@ async function gitlab(directory: string, reference?: Reference): Promise<Pr | un
     title: parsed.title,
     state: parsed.state === "opened" ? "OPEN" : parsed.state.toUpperCase(),
     isDraft: ("draft" in parsed && parsed.draft === true) || ("work_in_progress" in parsed && parsed.work_in_progress === true),
+    hasConflicts: ("has_conflicts" in parsed && parsed.has_conflicts === true) ||
+      ("detailed_merge_status" in parsed && parsed.detailed_merge_status === "conflict"),
     statusCheckRollup: check ? [check] : [],
   }
 }

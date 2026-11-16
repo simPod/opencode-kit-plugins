@@ -21,7 +21,10 @@ ${cli === "glab" ? `if [ -n "$EXPECTED_REPO" ]; then
   if [ "$3 $4 $5" != "42 --repo $EXPECTED_REPO" ]; then exit 1; fi
 fi
 if [ -n "$EXPECTED_SELECTOR" ] && [ "$3" != "$EXPECTED_SELECTOR" ]; then exit 1; fi
-if [ "$GLAB_NO_PROMPT" != "1" ]; then exit 1; fi` : ""}
+if [ "$GLAB_NO_PROMPT" != "1" ]; then exit 1; fi` : `for argument in "$@"; do
+  case ",$argument," in *,mergeable,*) requested_mergeable=1 ;; esac
+done
+if [ "$requested_mergeable" != "1" ]; then exit 1; fi`}
 printf '%s' "$${cli === "gh" ? "GITHUB_RESPONSE" : "GITLAB_RESPONSE"}"
 exit "$${cli === "gh" ? "GITHUB_EXIT" : "GITLAB_EXIT"}"
 `)
@@ -73,9 +76,10 @@ describe("fetchPr", () => {
   test("finds the current branch's merge request when GitHub is unavailable", async () => {
     assert.deepEqual(await fetch(), {
       provider: "gitlab", number: 42, url, title: "Update widget", state: "OPEN", isDraft: false,
+      hasConflicts: false,
       statusCheckRollup: [{ status: "COMPLETED", conclusion: "SUCCESS" }],
     })
-    assert.deepEqual(await fetch(undefined, { githubExit: 0 }), pull)
+    assert.deepEqual(await fetch(undefined, { githubExit: 0 }), { ...pull, hasConflicts: false })
   })
 
   test("uses an adopted merge request's host and nested project rather than the current repository", async () => {
@@ -121,6 +125,25 @@ describe("fetchPr", () => {
     const legacyPipeline = await fetch(url, { gitlab: { ...mr, head_pipeline: null, pipeline: { status: "failed" } } })
     assert(legacyPipeline !== null)
     assert.deepEqual(legacyPipeline.statusCheckRollup, [{ status: "COMPLETED", conclusion: "FAILURE" }])
+  })
+
+  test("recognizes confirmed conflicts without confusing CI or approval blockers with conflicts", async () => {
+    for (const [fields, expected] of [
+      [{ has_conflicts: true }, true],
+      [{ has_conflicts: false, detailed_merge_status: "conflict" }, true],
+      [{ has_conflicts: false, detailed_merge_status: "not_approved" }, false],
+      [{ merge_status: "cannot_be_merged", detailed_merge_status: "ci_still_running" }, false],
+      [{ detailed_merge_status: "checking" }, false],
+    ] as const) {
+      const request = await fetch(url, { gitlab: { ...mr, ...fields } })
+      assert(request !== null)
+      assert.equal(request.hasConflicts, expected, JSON.stringify(fields))
+    }
+    for (const mergeable of ["CONFLICTING", "MERGEABLE", "UNKNOWN"]) {
+      const request = await fetch(pull.url, { githubExit: 0, github: { ...pull, mergeable } })
+      assert(request !== null)
+      assert.equal(request.hasConflicts, mergeable === "CONFLICTING", mergeable)
+    }
   })
 
   test("can refresh an explicit MR URL after its original worktree is removed", async () => {

@@ -14,6 +14,7 @@ const b: Pr = { ...a, number: 2, url: a.url.replace(/1$/, "2"), title: "Session 
 const [store, setStore] = createStore({ roots: { A: [a.url], B: [b.url] }, prs: { [a.url]: a, [b.url]: b } })
 const lookups: (string | undefined)[] = []
 let passed = false
+let hasConflicts = false
 const { mrReference } = await import("./request")
 mock.module("./request", () => ({
   mrReference,
@@ -21,7 +22,10 @@ mock.module("./request", () => ({
     lookups.push(url)
     if (!url) return undefined
     const pr = url === a.url ? a : b
-    return { ...pr, statusCheckRollup: passed ? [{ status: "COMPLETED", conclusion: "SUCCESS" }] : pr.statusCheckRollup }
+    return {
+      ...pr, hasConflicts,
+      statusCheckRollup: passed ? [{ status: "COMPLETED", conclusion: "SUCCESS" }] : pr.statusCheckRollup,
+    }
   },
 }))
 const { default: plugin } = await import("./index")
@@ -101,6 +105,7 @@ try {
   assert.match(view.captureCharFrame(), /◌.*!1 Session A/)
   lookups.length = 0
   passed = true
+  hasConflicts = true
   await advance(30_000)
   setStore("prs", a.url, "title", "Session A updated")
   await advance(14_999)
@@ -109,8 +114,13 @@ try {
   assert(!lookups.includes(undefined), "poll only requests linked to the active session family")
   assert(lookups.includes(a.url), "refresh the active session's saved MR")
   assert(!lookups.includes(b.url), "do not poll a mounted background session")
-  assert.match(view.captureCharFrame(), /●.*!1 Session A/)
+  assert.match(view.captureCharFrame(), /●.*!1 \[conflicts\] Session A/)
   assert.equal(store.prs[a.url]?.statusCheckRollup[0]?.conclusion, "SUCCESS")
+
+  hasConflicts = false
+  await advance(45_000)
+  assert.match(view.captureCharFrame(), /●.*!1 Session A/)
+  assert.doesNotMatch(view.captureCharFrame(), /\[conflicts\]/)
 
   lookups.length = 0
   setRoute({ type: "session", sessionID: "B" })

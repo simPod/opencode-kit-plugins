@@ -2,7 +2,7 @@ import { test } from "bun:test"
 import { strict as assert } from "node:assert"
 import path from "node:path"
 
-test("polls CI only for the active mounted session and stops on disposal", async () => {
+test("polls request state only for the active mounted session and stops on disposal", async () => {
   // Isolate Solid's client runtime, module mocks, and clock from the other tests.
   const proc = Bun.spawn([
     process.execPath, "--preload", "@opentui/solid/preload",
