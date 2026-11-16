@@ -8,7 +8,7 @@ session is active. Polling stops when you leave the session or the sidebar is
 removed. Merged and closed requests are
 hidden. GitHub requests use `#123`; GitLab requests use `!123`.
 
-Confirmed merge conflicts show a red `×` next to the request number, independently of the CI icon.
+Confirmed merge conflicts show a peach/orange `×` next to the request number, independently of the CI icon.
 GitLab's conflict flag or detailed conflict status and GitHub's `CONFLICTING` mergeability state supply this marker.
 Pending CI, missing approvals, and unknown mergeability do not count as conflicts. The marker clears on refresh when
 the provider no longer reports a conflict.

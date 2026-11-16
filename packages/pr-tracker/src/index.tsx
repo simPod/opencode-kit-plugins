@@ -18,6 +18,7 @@ const COLORS: Record<string, string> = {
   OPEN: "#a6da95",
   MERGED: "#c6a0f6",
   CLOSED: "#ed8796",
+  CONFLICT: "#f5a97f",
 }
 
 function checkStatus(pr: Pr) {
@@ -79,7 +80,7 @@ function PrRow(props: { context: Plugin.Context; pr: Pr }) {
         >
           {props.pr.provider === "gitlab" ? "!" : "#"}{props.pr.number}
         </span>{" "}
-        {props.pr.hasConflicts && <span style={{ fg: COLORS.CLOSED }}>× </span>}
+        {props.pr.hasConflicts && <span style={{ fg: COLORS.CONFLICT }}>× </span>}
         {props.pr.title}
       </text>
     </box>
