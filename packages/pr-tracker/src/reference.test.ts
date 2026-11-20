@@ -249,4 +249,52 @@ PY`
     ])
     assert.deepEqual(requestReferences("glab mr update 42", `updated title to "${mentioned}"`), [])
   })
+
+  test("adopts a create with a multiline description from an unquoted cat heredoc", () => {
+    const url = "https://code.example.com/group/widget/-/merge_requests/42"
+    const mentioned = "https://code.example.com/group/widget/-/merge_requests/99"
+    const command = [
+      "set -euo pipefail",
+      'glab mr create --title Change --description "$(cat <<EOF',
+      `Related: ${mentioned}`,
+      "OpenCode session: $OPENCODE_SESSION_ID",
+      "EOF",
+      ')" --target-branch master --push --yes',
+    ].join("\n")
+    assert.deepEqual(requestReferences(command, `${url}\n`), [{ provider: "gitlab", value: url }])
+    assert.deepEqual(requestReferences(command, ""), [])
+    for (const line of ["$(printf text)", "`printf text`", "continued\\", '${SESSION_ID:-$(printf text)}']) {
+      assert.deepEqual(requestReferences(command.replace(`Related: ${mentioned}`, line), url), [], line)
+    }
+  })
+
+  test("adopts a guarded update followed by a successful jq assertion", () => {
+    const url = "https://code.example.com/group/widget/-/merge_requests/42"
+    const other = "https://code.example.com/other/widget/-/merge_requests/42"
+    const update = `glab mr update ${url} --title Change`
+    const check = `jq -e --arg sid "$OPENCODE_SESSION_ID" '($sid | length) > 0' ~/.local/state/tracker.json`
+    const command = `set -e\n${update}\n${check}`
+    const banner = "- Updating merge request !42\n✓ updated title to \"Change\"\n"
+    assert.deepEqual(requestReferences(command, `${banner}${url}\ntrue\n`), [{ provider: "gitlab", value: url }])
+    for (const output of [
+      `${banner}${other}\ntrue\n`,
+      `${banner}${url}\nfalse\n`,
+      `${banner}${url}\n${other}\ntrue\n`,
+      `${banner.replace("!42", "!43")}${url}\ntrue\n`,
+      `${url}\ntrue\n`,
+    ]) assert.deepEqual(requestReferences(command, output), [], output)
+    assert.deepEqual(requestReferences(`${update}\n${check}`, `${banner}${url}\ntrue\n`), [])
+    assert.deepEqual(requestReferences(`set '-euo pipefail'\n${update}\n${check}`, `${banner}${url}\ntrue\n`), [])
+    assert.deepEqual(requestReferences(command.replace(url, "https://[/group/widget/-/merge_requests/42"), ""), [])
+    assert.deepEqual(requestReferences(`set -e\n${update}\nprintf 'true\\n'`, `${banner}${url}\ntrue\n`), [])
+  })
+
+  test("adopts only successful updates reported by a batch wrapper", () => {
+    const url = "https://code.example.com/group/widget/-/merge_requests/42"
+    const output = [
+      { args: ["glab", "mr", "update", url, "--title", "Change"], returncode: 0, stdout: `${url}\n`, stderr: "" },
+      { args: ["glab", "mr", "update", "43"], returncode: 1, stdout: `${url.slice(0, -1)}3\n`, stderr: "Failed" },
+    ].map((record) => JSON.stringify(record)).join("\n")
+    assert.deepEqual(requestReferences("python3 update-mrs.py", output), [{ provider: "gitlab", value: url }])
+  })
 })

@@ -20,8 +20,7 @@ function ansiEnd(command: string, start: number): number | undefined {
   return undefined
 }
 
-// Only locate the end of a substitution; never evaluate its contents. Restrict
-// heredocs to a quoted delimiter on its own line so body syntax stays opaque.
+// Only locate the end of a substitution; never evaluate its contents.
 function substitutionEnd(command: string, start: number): number | undefined {
   let depth = 1
   let quote: string | undefined
@@ -54,16 +53,26 @@ function substitutionEnd(command: string, start: number): number | undefined {
     }
     if (character === "'" || character === '"') quote = character
     else if (command.startsWith("<<", index)) {
-      const header = command.slice(index).match(/^<<[ \t]*(['"])([A-Za-z_]\w*)\1[ \t]*\n/)
+      const rest = command.slice(index)
+      const quoted = rest.match(/^<<[ \t]*(['"])([A-Za-z_]\w*)\1[ \t]*\n/)
+      // A bare delimiter is safe to skip for a single cat heredoc with
+      // literal text and simple variables, not nested shell or continuations.
+      const bare = !quoted && /^[ \t]*cat[ \t]+$/.test(command.slice(start + 2, index))
+        ? rest.match(/^<<[ \t]*([A-Za-z_]\w*)[ \t]*\n/)
+        : null
+      const header = quoted ?? bare
       if (!header) return undefined
+      const delimiter = quoted?.[2] ?? bare?.[1]
       let line = index + header[0].length
       while (true) {
         const end = command.indexOf("\n", line)
         if (end === -1) return undefined
-        if (command.slice(line, end) === header[2]) {
+        const body = command.slice(line, end)
+        if (body === delimiter) {
           index = end
           break
         }
+        if (bare && /[\\`]|[$](?![A-Za-z_]|\{[A-Za-z_]\w*\})/.test(body)) return undefined
         line = end + 1
       }
     } else if (character === "#") {
@@ -78,7 +87,7 @@ function substitutionEnd(command: string, start: number): number | undefined {
 
 // Executables, actions, selectors, and flags must be literal. Quoted expansions
 // and ANSI strings stay opaque and can only be accepted as text option values.
-function shellCommands(command: string, pipeline = false): ShellWord[][] {
+function shellCommands(command: string, pipeline = false, allowHomePath = false): ShellWord[][] {
   const commands: ShellWord[][] = []
   let words: ShellWord[] = []
   let word: string | undefined
@@ -136,7 +145,8 @@ function shellCommands(command: string, pipeline = false): ShellWord[][] {
     if (character === "'" || character === '"') {
       quote = character
       word ??= ""
-    } else if (/[<>()[\]{}*?~]/.test(character)) return []
+    } else if (character === "~" && allowHomePath && word === undefined && command[index + 1] === "/") append(character)
+    else if (/[<>()[\]{}*?~]/.test(character)) return []
     else if (character === "#" && word === undefined) {
       while (index < command.length && command[index] !== "\n") index++
       endCommand()
@@ -160,7 +170,7 @@ function shellCommands(command: string, pipeline = false): ShellWord[][] {
   return commands
 }
 
-function textArguments(args: ShellWord[]): boolean {
+function textArguments(args: ShellWord[], create = false): boolean {
   if (!args.some((word) => word.opaque)) return true
   // Parse option arity so a text flag used as another option's value cannot
   // accidentally authorize an opaque selector or flag. Unknown flags fail closed.
@@ -172,7 +182,7 @@ function textArguments(args: ShellWord[]): boolean {
       continue
     }
     if (!argument.value.startsWith("-")) continue
-    if (booleanFlags.has(flag!) || flag === "--auto-merge") continue
+    if (booleanFlags.has(flag!) || flag === "--auto-merge" || (create && flag === "--push")) continue
     if (!valueFlags.has(flag!) && flag !== "--source-branch") return false
     if (inline !== undefined) continue
     const option = args[++index]
@@ -199,6 +209,43 @@ function updateReference(args: string[]): Reference | undefined {
     if (flag === "--repo" || flag === "-R") repository = option
   }
   return { provider: "gitlab", value, repository }
+}
+
+function checkedUpdateReference(command: string, output: string): Reference | undefined {
+  const [guard, operation, check, ...rest] = shellCommands(command, false, true)
+  if (!guard || !operation || !check || rest.length !== 0 || guard.some((word) => word.opaque)) return undefined
+  if (guard[0]?.value !== "set" ||
+    !(guard.length === 2 && guard[1]?.value === "-e" ||
+      guard.length === 3 && guard[1]?.value === "-euo" && guard[2]?.value === "pipefail")) return undefined
+  if (operation.slice(0, 3).some((word) => word.opaque) ||
+    !/(?:^|\/)glab$/.test(operation[0]?.value ?? "") ||
+    operation[1]?.value !== "mr" || operation[2]?.value !== "update") return undefined
+  const args = operation.slice(3)
+  if (!textArguments(args)) return undefined
+  const target = updateReference(args.map((word) => word.value))?.value
+  if (!target || !mrUrlPattern.test(target)) return undefined
+  const url = URL.parse(target)
+  if (!url || url.username || url.password) return undefined
+
+  // Match one jq -e check with a static filter and file (which can start with ~/).
+  // Only --arg values may contain variable expansions.
+  if (check.slice(0, 2).some((word) => word.opaque) ||
+    check[0]?.value !== "jq" || check[1]?.value !== "-e") return undefined
+  let index = 2
+  while (check[index]?.value === "--arg" && !check[index]?.opaque) {
+    const name = check[index + 1]
+    if (!name || name.opaque || !/^[A-Za-z_]\w*$/.test(name.value) || !check[index + 2]) return undefined
+    index += 3
+  }
+  const [filter, file, ...extra] = check.slice(index)
+  if (!filter || !file || extra.length !== 0 || filter.opaque || file.opaque ||
+    !filter.value || filter.value.startsWith("-") || !file.value || file.value.startsWith("-")) return undefined
+
+  const lines = output.split(/\r?\n/).filter((line) => line !== "")
+  if (lines.at(-1) !== "true" || lines.at(-2) !== target) return undefined
+  const banners = lines.slice(0, -2).filter((line) => /^- Updating merge request ![1-9]\d*$/.test(line))
+  if (banners.length !== 1 || banners[0] !== `- Updating merge request !${target.split("/").at(-1)}`) return undefined
+  return { provider: "gitlab", value: target }
 }
 
 function resultProjection(filter: string): boolean {
@@ -340,6 +387,8 @@ export function requestReferences(command: unknown, output: unknown): Reference[
   if (scripted.length > 0) return [...github, ...scripted]
   const api = apiReference(command, output)
   if (api) return [...github, api]
+  const checkedUpdate = typeof output === "string" ? checkedUpdateReference(command, output) : undefined
+  if (checkedUpdate) return [...github, checkedUpdate]
   const commands = shellCommands(command)
   const operations = commands.filter((words) =>
     words.slice(0, 3).every((word) => !word.opaque) &&
@@ -349,7 +398,7 @@ export function requestReferences(command: unknown, output: unknown): Reference[
   const operation = operations[0]!
   if (commands.slice(0, -1).some((words) => words.some((word) => word.opaque))) return github
   const arguments_ = operation.slice(3)
-  if (!textArguments(arguments_)) return github
+  if (!textArguments(arguments_, operation[2]?.value === "create")) return github
   const args = arguments_.map((word) => word.value)
   if (args.some((arg) => ["--dry-run", "--web", "-w", "--help", "-h"].includes(arg.split("=")[0]!))) return github
 

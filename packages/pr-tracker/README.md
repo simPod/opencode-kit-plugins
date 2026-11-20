@@ -20,6 +20,13 @@ successful `glab mr create`, `glab mr update`, and `glab api` PUT updates to
 number and URL, including `jq` projections that preserve those fields. Requests
 merely mentioned or viewed during research do not appear.
 
+MR creation can use a multiline `--description "$(cat <<EOF …)"` with ordinary
+text and simple shell variables. Quote the delimiter if the body contains
+backticks, nested substitutions, or backslashes. A `glab mr update <full URL>`
+under `set -e` or `set -euo pipefail` can also be followed by one `jq -e` file
+check that prints `true`. The update must still print the matching GitLab
+update banner and result URL. For shell loops, use the subprocess records below.
+
 When a session opens, recovery reads its complete history and its subagents'
 history, including nested subagents. You do not need to open each subagent's tab
 first. Recovery is retried during polling if a history read fails, and unchanged
