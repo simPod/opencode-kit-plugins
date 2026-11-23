@@ -8,13 +8,14 @@ import type { Pr } from "./request"
 
 const a: Pr = {
   provider: "gitlab", number: 1, url: "https://code.example.com/acme/widget/-/merge_requests/1",
-  title: "Session A", state: "OPEN", isDraft: false, statusCheckRollup: [{ status: "IN_PROGRESS" }],
+  title: "Session A", state: "OPEN", isDraft: true, statusCheckRollup: [{ status: "IN_PROGRESS" }],
 }
 const b: Pr = { ...a, number: 2, url: a.url.replace(/1$/, "2"), title: "Session B" }
 const [store, setStore] = createStore({ roots: { A: [a.url], B: [b.url] }, prs: { [a.url]: a, [b.url]: b } })
 const lookups: (string | undefined)[] = []
-let passed = false
+let conclusion: "FAILURE" | "SUCCESS" | undefined
 let hasConflicts = false
+let isDraft = true
 const { mrReference } = await import("./request")
 mock.module("./request", () => ({
   mrReference,
@@ -23,8 +24,10 @@ mock.module("./request", () => ({
     if (!url) return undefined
     const pr = url === a.url ? a : b
     return {
-      ...pr, hasConflicts,
-      statusCheckRollup: passed ? [{ status: "COMPLETED", conclusion: "SUCCESS" }] : pr.statusCheckRollup,
+      ...pr, hasConflicts, isDraft,
+      statusCheckRollup: conclusion
+        ? [{ status: "COMPLETED", conclusion }]
+        : pr.statusCheckRollup,
     }
   },
 }))
@@ -102,10 +105,10 @@ async function advance(milliseconds: number) {
 
 try {
   await advance(0)
-  assert.match(view.captureCharFrame(), /◌.*!1 Session A/)
+  assert.match(view.captureCharFrame(), /◌.*!1 ◇ Session A/)
   lookups.length = 0
-  passed = true
   hasConflicts = true
+  conclusion = "FAILURE"
   await advance(30_000)
   setStore("prs", a.url, "title", "Session A updated")
   await advance(14_999)
@@ -114,9 +117,13 @@ try {
   assert(!lookups.includes(undefined), "poll only requests linked to the active session family")
   assert(lookups.includes(a.url), "refresh the active session's saved MR")
   assert(!lookups.includes(b.url), "do not poll a mounted background session")
-  assert.match(view.captureCharFrame(), /●.*!1 × Session A/)
-  assert.equal(store.prs[a.url]?.statusCheckRollup[0]?.conclusion, "SUCCESS")
+  assert.match(view.captureCharFrame(), /×.*!1 ◇ × Session A/)
 
+  conclusion = "SUCCESS"
+  await advance(45_000)
+  assert.match(view.captureCharFrame(), /●.*!1 ◇ × Session A/)
+
+  isDraft = false
   hasConflicts = false
   await advance(45_000)
   assert.match(view.captureCharFrame(), /●.*!1 Session A/)

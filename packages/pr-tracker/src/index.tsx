@@ -18,6 +18,7 @@ const COLORS: Record<string, string> = {
   OPEN: "#a6da95",
   MERGED: "#c6a0f6",
   CLOSED: "#ed8796",
+  DRAFT: "#8aadf4",
   CONFLICT: "#f5a97f",
 }
 
@@ -36,7 +37,6 @@ function checkStatus(pr: Pr) {
 }
 
 function statusIcon(pr: Pr) {
-  if (pr.isDraft) return "◇"
   if (pr.state === "MERGED") return "✓"
   if (pr.state === "CLOSED") return "×"
   const checks = checkStatus(pr)
@@ -46,7 +46,6 @@ function statusIcon(pr: Pr) {
 }
 
 function statusColor(pr: Pr) {
-  if (pr.isDraft) return "#8aadf4"
   if (pr.state === "MERGED") return COLORS.MERGED
   const checks = checkStatus(pr)
   if (pr.state === "CLOSED" || checks === "failed") return COLORS.CLOSED
@@ -80,6 +79,7 @@ function PrRow(props: { context: Plugin.Context; pr: Pr }) {
         >
           {props.pr.provider === "gitlab" ? "!" : "#"}{props.pr.number}
         </span>{" "}
+        {props.pr.isDraft && <span style={{ fg: COLORS.DRAFT }}>◇ </span>}
         {props.pr.hasConflicts && <span style={{ fg: COLORS.CONFLICT }}>× </span>}
         {props.pr.title}
       </text>
