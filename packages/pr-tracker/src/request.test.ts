@@ -16,6 +16,11 @@ beforeAll(async () => {
   for (const cli of ["gh", "glab"]) {
     const file = path.join(directory, cli)
     await writeFile(file, `#!/bin/sh
+${cli === "glab" ? `if [ "$1" = "api" ]; then
+  if [ "$2 $3 $4" != "--hostname code.example.com projects/group%2Fteam%2Fwidget/merge_requests/42/approvals" ]; then exit 1; fi
+  printf '%s' "$GITLAB_APPROVALS"
+  exit "$GITLAB_APPROVALS_EXIT"
+fi` : ""}
 if [ "$1 $2" != "${cli === "gh" ? "pr" : "mr"} view" ]; then exit 1; fi
 ${cli === "glab" ? `if [ -n "$EXPECTED_REPO" ]; then
   if [ "$3 $4 $5" != "42 --repo $EXPECTED_REPO" ]; then exit 1; fi
@@ -39,8 +44,10 @@ afterAll(async () => {
 async function fetch(reference?: string | Reference, options: {
   github?: unknown
   gitlab?: unknown
+  gitlabApprovals?: { approved: boolean; approved_by: readonly { user: { id: number } }[] }
   githubExit?: number
   gitlabExit?: number
+  gitlabApprovalsExit?: number
   expectedRepo?: string
   expectedSelector?: string
   missingCli?: boolean
@@ -60,6 +67,8 @@ async function fetch(reference?: string | Reference, options: {
       GITLAB_RESPONSE: typeof options.gitlab === "string" ? options.gitlab : JSON.stringify(options.gitlab ?? mr),
       GITHUB_EXIT: String(options.githubExit ?? 1),
       GITLAB_EXIT: String(options.gitlabExit ?? 0),
+      GITLAB_APPROVALS: JSON.stringify(options.gitlabApprovals ?? {}),
+      GITLAB_APPROVALS_EXIT: String(options.gitlabApprovalsExit ?? 0),
       EXPECTED_REPO: options.expectedRepo ?? "",
       EXPECTED_SELECTOR: options.expectedSelector ?? "",
     },
@@ -144,6 +153,29 @@ describe("fetchPr", () => {
       assert(request !== null)
       assert.equal(request.hasConflicts, mergeable === "CONFLICTING", mergeable)
     }
+  })
+
+  test("reports GitLab approval only when the requirements are met and a reviewer approved", async () => {
+    const vote = { user: { id: 123 } }
+    for (const [approved, approvedBy, expected] of [
+      [true, [vote], true],
+      [false, [vote], false],
+      [true, [], false],
+    ] as const) {
+      const request = await fetch(url, { gitlabApprovals: { approved, approved_by: approvedBy } })
+      assert(request !== null)
+      assert.equal(request.isApproved, expected)
+    }
+  })
+
+  test("keeps the MR and its CI status visible when GitLab approval data is unavailable", async () => {
+    const request = await fetch(url, {
+      gitlabApprovals: { approved: true, approved_by: [{ user: { id: 123 } }] },
+      gitlabApprovalsExit: 1,
+    })
+    assert(request !== null)
+    assert.equal(request.isApproved, undefined)
+    assert.deepEqual(request.statusCheckRollup, [{ status: "COMPLETED", conclusion: "SUCCESS" }])
   })
 
   test("can refresh an explicit MR URL after its original worktree is removed", async () => {
