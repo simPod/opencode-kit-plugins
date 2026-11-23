@@ -9,6 +9,7 @@ export type Pr = {
   state: string
   title: string
   isDraft: boolean
+  isApproved?: boolean
   hasConflicts?: boolean
   mergedAt?: string
   statusCheckRollup: Check[]
@@ -85,10 +86,24 @@ async function github(directory: string, reference?: Reference): Promise<Pr | un
   }
 }
 
+async function gitlabApproved(directory: string, repository: string, iid: number): Promise<boolean | undefined> {
+  const { host, pathname } = new URL(repository)
+  const project = pathname.slice(1).replaceAll("/", "%2F")
+  const approvals = await run(directory, "glab", "api", "--hostname", host,
+    `projects/${project}/merge_requests/${iid}/approvals`)
+  if (typeof approvals !== "object" || approvals === null ||
+    !("approved" in approvals) || typeof approvals.approved !== "boolean") return undefined
+  // GitLab EE can report approved with no votes when no approval rules apply.
+  return approvals.approved &&
+    "approved_by" in approvals && Array.isArray(approvals.approved_by) && approvals.approved_by.length > 0
+}
+
 async function gitlab(directory: string, reference?: Reference): Promise<Pr | undefined> {
-  const parsed = await run(
+  const cwd =
     reference?.value && reference.repository && /^https?:\/\//.test(reference.repository) && !existsSync(directory)
-      ? process.cwd() : directory,
+      ? process.cwd() : directory
+  const parsed = await run(
+    cwd,
     "glab",
     "mr",
     "view",
@@ -105,7 +120,8 @@ async function gitlab(directory: string, reference?: Reference): Promise<Pr | un
     !("state" in parsed) || typeof parsed.state !== "string"
   )
     return undefined
-  if (!mrReference(parsed.web_url)) return undefined
+  const repository = mrReference(parsed.web_url)?.repository
+  if (!repository) return undefined
   const pipeline = ("head_pipeline" in parsed ? parsed.head_pipeline : undefined)
     ?? ("pipeline" in parsed ? parsed.pipeline : undefined)
   const status = typeof pipeline === "object" && pipeline !== null && "status" in pipeline ? pipeline.status : undefined
@@ -122,6 +138,7 @@ async function gitlab(directory: string, reference?: Reference): Promise<Pr | un
     title: parsed.title,
     state: parsed.state === "opened" ? "OPEN" : parsed.state.toUpperCase(),
     isDraft: ("draft" in parsed && parsed.draft === true) || ("work_in_progress" in parsed && parsed.work_in_progress === true),
+    isApproved: parsed.state === "opened" ? await gitlabApproved(cwd, repository, parsed.iid) : undefined,
     hasConflicts: ("has_conflicts" in parsed && parsed.has_conflicts === true) ||
       ("detailed_merge_status" in parsed && parsed.detailed_merge_status === "conflict"),
     statusCheckRollup: check ? [check] : [],

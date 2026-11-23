@@ -12,10 +12,13 @@ The leading icon shows CI status for both draft and ready requests. Drafts also
 show a blue `◇` next to the request number, so the draft marker does not hide
 pending or failed CI.
 
-Confirmed merge conflicts show a peach/orange `×` next to the request number, independently of the CI icon.
+Confirmed merge conflicts show a peach/orange `⚠` next to the request number, independently of the CI icon.
 GitLab's conflict flag or detailed conflict status and GitHub's `CONFLICTING` mergeability state supply this marker.
 Pending CI, missing approvals, and unknown mergeability do not count as conflicts. The marker clears on refresh when
 the provider no longer reports a conflict.
+
+Open GitLab merge requests show `✓ Approved` once a reviewer has approved and GitLab reports that all
+approval requirements are met. The badge is independent of CI and conflicts, and clears when approval is removed.
 
 The plugin adopts pull requests from successful `gh pr create`, `gh pr edit`,
 and `gh api repos/<owner>/<repo>/pulls/<number>` commands, and merge requests from
