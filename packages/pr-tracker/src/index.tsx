@@ -81,7 +81,7 @@ function PrRow(props: { context: Plugin.Context; pr: Pr }) {
         </span>{" "}
         {props.pr.isDraft && <span style={{ fg: COLORS.DRAFT }}>◇ </span>}
         {props.pr.hasConflicts && <span style={{ fg: COLORS.CONFLICT }}>⚠ </span>}
-        {props.pr.isApproved && <span style={{ fg: COLORS.OPEN }}>✓ </span>}
+        {props.pr.isApproved && <span style={{ fg: COLORS.OPEN }}>✓ Approved </span>}
         {props.pr.title}
       </text>
     </box>

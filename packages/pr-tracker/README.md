@@ -17,7 +17,7 @@ GitLab's conflict flag or detailed conflict status and GitHub's `CONFLICTING` me
 Pending CI, missing approvals, and unknown mergeability do not count as conflicts. The marker clears on refresh when
 the provider no longer reports a conflict.
 
-Open GitLab merge requests show a green `✓` once a reviewer has approved and GitLab reports that all
+Open GitLab merge requests show a green `✓ Approved` once a reviewer has approved and GitLab reports that all
 approval requirements are met. The badge is independent of CI and conflicts, and clears when approval is removed.
 
 The plugin adopts pull requests from successful `gh pr create`, `gh pr edit`,
