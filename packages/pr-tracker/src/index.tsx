@@ -20,6 +20,7 @@ const COLORS: Record<string, string> = {
   CLOSED: "#ed8796",
   DRAFT: "#8aadf4",
   CONFLICT: "#f5a97f",
+  APPROVAL: "#b7bdf8",
 }
 
 function checkStatus(pr: Pr) {
@@ -81,7 +82,7 @@ function PrRow(props: { context: Plugin.Context; pr: Pr }) {
         </span>{" "}
         {props.pr.isDraft && <span style={{ fg: COLORS.DRAFT }}>◇ </span>}
         {props.pr.hasConflicts && <span style={{ fg: COLORS.CONFLICT }}>⚠ </span>}
-        {props.pr.isApproved && <span style={{ fg: COLORS.OPEN }}>✓ Approved </span>}
+        {props.pr.isApproved && <span style={{ fg: COLORS.APPROVAL }}>✓ </span>}
         {props.pr.title}
       </text>
     </box>
